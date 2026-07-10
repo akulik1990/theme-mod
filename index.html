@@ -94,6 +94,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .landing{border:1px solid var(--acc2);border-radius:8px;padding:8px 10px;margin-bottom:12px;background:#171a2c}
 .landing h3{margin:0 0 6px;color:var(--acc2)}
 .committed-note{color:var(--good);font-size:12px}
+.ghead{cursor:pointer;color:var(--acc);font-size:12px;font-weight:600;letter-spacing:.05em;
+  padding:4px 6px 2px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.ghead:hover{color:var(--text)}
+.gctl{border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
 .evform{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px}
 </style>
 </head>
@@ -306,17 +310,47 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <div class="spread">
             <h2>Roster <span class="dim small">{{ aliveCount }} / {{ game.players.length }} alive</span></h2>
           </div>
-          <!-- GROUPBY (step 7) -->
-          <div>
-            <div v-for="p in rosterFlat" class="pline" :class="{deadline:!p.alive}" @click="openPlayer(p)">
-              <span class="al" :class="alignClass(p.alignment)">{{ alignShort(p.alignment) }}</span>
-              <span class="who">{{ p.name }} <span class="char">— {{ p.character }}</span><span
-                v-if="!p.alive" class="died" :title="p.deathCause || 'cause unknown'">†{{ p.deathPhase || '?' }}</span></span>
-              <span class="icons">
-                <span v-for="it in p.inventory" :title="iconTitle(it)">{{ it.icon }}</span>
-                <span v-for="f in p.flags" class="fl" :title="iconTitle(f) + flagSuffix(f)">{{ f.icon }}</span>
-              </span>
+          <!-- GROUPBY -->
+          <div class="gctl">
+            <div class="row" v-for="(c,i) in view.chain" style="margin-bottom:3px">
+              <select :value="c" @change="view.chain[i]=$event.target.value">
+                <option v-for="o in condOptions" :value="o.v">{{ o.label }}</option>
+              </select>
+              <button class="mini" :disabled="i===0" @click="moveIn(view.chain,i,-1)">▲</button>
+              <button class="mini" :disabled="i===view.chain.length-1" @click="moveIn(view.chain,i,1)">▼</button>
+              <button class="mini danger" @click="view.chain.splice(i,1)">✕</button>
             </div>
+            <div class="row" style="margin-bottom:6px">
+              <select v-model="ui.addCond" @change="addGrouping">
+                <option value="">+ group by…</option>
+                <option v-for="o in condOptions" :value="o.v">{{ o.label }}</option>
+              </select>
+              <label>sort</label>
+              <select v-model="view.leafSort">
+                <option value="roll">roll order</option>
+                <option value="align">alignment</option>
+                <option value="char">character A–Z</option>
+                <option value="alive">alive first</option>
+              </select>
+            </div>
+            <div class="dim small" v-if="view.chain.length" style="margin-bottom:6px">{{ breadcrumb }}</div>
+          </div>
+          <div>
+            <template v-for="en in rosterEntries">
+              <div v-if="en.t==='h'" class="ghead" :style="{paddingLeft:(en.depth*14)+'px'}" @click="toggleFold(en.path)">
+                {{ en.folded ? '▸' : '▾' }} {{ en.label }} <span class="dim small">{{ en.count }}</span>
+              </div>
+              <div v-else class="pline" :class="{deadline:!en.p.alive}"
+                :style="{paddingLeft:(en.depth*14+6)+'px'}" @click="openPlayer(en.p)">
+                <span class="al" :class="alignClass(en.p.alignment)">{{ alignShort(en.p.alignment) }}</span>
+                <span class="who">{{ en.p.name }} <span class="char">— {{ en.p.character }}</span><span
+                  v-if="!en.p.alive" class="died" :title="en.p.deathCause || 'cause unknown'">†{{ en.p.deathPhase || '?' }}</span></span>
+                <span class="icons">
+                  <span v-for="it in en.p.inventory" :title="iconTitle(it)">{{ it.icon }}</span>
+                  <span v-for="f in en.p.flags" class="fl" :title="iconTitle(f) + flagSuffix(f)">{{ f.icon }}</span>
+                </span>
+              </div>
+            </template>
           </div>
         </div>
         <!-- EXPORTS (step 8) -->
@@ -762,7 +796,7 @@ const app = createApp({
         modalP: null, tab: null, ev: null, evErr: "", proposal: null,
         itemSel: "gun", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "marked", flagIcon: "🎯", flagName: "", flagDesc: "",
-        flagDur: null, disgAs: "character", disgVal: "",
+        flagDur: null, disgAs: "character", disgVal: "", addCond: "",
       },
     };
   },
@@ -785,6 +819,38 @@ const app = createApp({
     actorHasGun() {
       const p = this.game.players.find(x => x.name === this.ui.ev.actor);
       return p && p.inventory.some(it => it.key === "gun");
+    },
+    condOptions() {
+      const flags = new Set(), items = new Set();
+      this.game.players.forEach(p => {
+        p.flags.forEach(f => flags.add(f.name));
+        p.inventory.forEach(it => items.add(it.name));
+      });
+      return [
+        { v: "field:alignment", label: "alignment" },
+        { v: "field:category", label: "category" },
+        { v: "field:alive", label: "alive / dead" },
+        ...[...flags].sort().map(n => ({ v: "flag:" + n, label: "flag: " + n })),
+        ...[...items].sort().map(n => ({ v: "item:" + n, label: "item: " + n })),
+      ];
+    },
+    breadcrumb() {
+      return this.view.chain.map(c => c.slice(c.indexOf(":") + 1)).join(" → ");
+    },
+    rosterEntries() {
+      const out = [];
+      const walk = (players, chain, path, depth) => {
+        if (!chain.length) { this.sortPlayers(players).forEach(p => out.push({ t: "p", p, depth })); return; }
+        for (const gr of this.partition(players, chain[0])) {
+          if (!gr.members.length) continue;
+          const p2 = path + ">" + gr.label;
+          const folded = !!this.view.folds[p2];
+          out.push({ t: "h", label: gr.label, count: gr.members.length, depth, path: p2, folded });
+          if (!folded) walk(gr.members, chain.slice(1), p2, depth + 1);
+        }
+      };
+      walk(this.game.players, this.view.chain, "", 0);
+      return out;
     },
   },
 
@@ -1027,6 +1093,50 @@ const app = createApp({
     evDelete(e) {
       const i = this.game.events.findIndex(x => x.id === e.id);
       this.apply("event removed: " + this.evLine(e), () => this.game.events.splice(i, 1));
+    },
+
+    /* ----- roster grouping (view state, never synced) ----- */
+    addGrouping() {
+      if (this.ui.addCond) this.view.chain.push(this.ui.addCond);
+      this.ui.addCond = "";
+    },
+    toggleFold(path) { this.view.folds[path] = !this.view.folds[path]; },
+    sortPlayers(list) {
+      const s = this.view.leafSort;
+      const alignRank = p => {
+        const i = this.game.preset.alignments.indexOf(p.alignment);
+        return i === -1 ? 99 : i;
+      };
+      return [...list].sort((a, b) => {
+        if (s === "align") return alignRank(a) - alignRank(b) || a.order - b.order;
+        if (s === "char") return a.character.localeCompare(b.character);
+        if (s === "alive") return (b.alive - a.alive) || (a.order - b.order);
+        return a.order - b.order;
+      });
+    },
+    partition(players, cond) {
+      const kind = cond.slice(0, cond.indexOf(":"));
+      const key = cond.slice(cond.indexOf(":") + 1);
+      if (kind === "field") {
+        if (key === "alive") return [
+          { label: "alive", members: players.filter(p => p.alive) },
+          { label: "dead", members: players.filter(p => !p.alive) },
+        ];
+        const known = key === "alignment" ? this.game.preset.alignments : this.game.preset.categories;
+        const vals = [...known.filter(v => players.some(p => p[key] === v)),
+          ...new Set(players.map(p => p[key]).filter(v => v && !known.includes(v)))];
+        const out = vals.map(v => ({ label: v, members: players.filter(p => p[key] === v) }));
+        const none = players.filter(p => !p[key]);
+        if (none.length) out.push({ label: "(none)", members: none });
+        return out;
+      }
+      const has = p => kind === "flag"
+        ? p.flags.some(f => f.name === key)
+        : p.inventory.some(it => it.name === key);
+      return [
+        { label: key, members: players.filter(has) },
+        { label: "(ungrouped)", members: players.filter(p => !has(p)) },
+      ];
     },
 
     /* ----- resolver (advisory) ----- */
