@@ -228,9 +228,13 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 
     <div class="card">
       <h2>Lists</h2>
-      <h3>Categories</h3>
+      <h3>Categories <span class="dim small">icon shows in the roster</span></h3>
       <div>
-        <span v-for="(k,i) in preset.categories" class="chip">{{ k }}<span class="x" @click="preset.categories.splice(i,1)">✕</span></span>
+        <span v-for="(k,i) in preset.categories" class="chip">
+          <select :value="catIconOf(preset,k)" @change="preset.categoryIcons[k]=$event.target.value">
+            <option v-for="ic in iconChoices(catIconOf(preset,k))" :value="ic">{{ ic }}</option>
+          </select>
+          {{ k }}<span class="x" @click="preset.categories.splice(i,1)">✕</span></span>
         <input v-model="ui.catNew" placeholder="add…" style="width:110px" @keyup.enter="pushTrim(preset.categories,'catNew')">
       </div>
       <h3>Alignments</h3>
@@ -336,6 +340,15 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <div class="card">
           <div class="spread">
             <h2>Roster <span class="dim small">{{ aliveCount }} / {{ game.players.length }} alive</span></h2>
+            <button class="mini ghost" @click="ui.rosterMenu=!ui.rosterMenu" title="display options">⚙</button>
+          </div>
+          <div v-if="ui.rosterMenu" class="row small" style="border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:6px">
+            <label v-for="k in Object.keys(view.show)" style="white-space:nowrap">
+              <input type="checkbox" v-model="view.show[k]"> {{ k }}</label>
+            <select @change="clearFlag($event)" title="remove a flag from every player">
+              <option value="">clear flag…</option>
+              <option v-for="n in gameFlagNames">{{ n }}</option>
+            </select>
           </div>
           <!-- GROUPBY -->
           <div class="gctl">
@@ -377,12 +390,19 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               </div>
               <div v-else class="pline" :class="{deadline:!en.p.alive}"
                 :style="{paddingLeft:(en.depth*14+6)+'px'}" @click="openPlayer(en.p)">
-                <span class="al" :class="alignClass(en.p.alignment)">{{ alignShort(en.p.alignment) }}</span>
-                <span class="who">{{ en.p.name }} <span class="char">— {{ en.p.character }}</span><span
+                <span v-if="view.show.alignment" class="al" :class="alignClass(en.p.alignment)">{{ alignShort(en.p.alignment) }}</span>
+                <span class="who"><template v-if="view.show.name">{{ en.p.name }}</template><span
+                    class="char" v-if="view.show.character">{{ view.show.name ? ' — ' : '' }}{{ en.p.character }}</span><span
                   v-if="!en.p.alive" class="died" :title="en.p.deathCause || 'cause unknown'">†{{ en.p.deathPhase || '?' }}</span></span>
                 <span class="icons">
-                  <span v-for="it in en.p.inventory" :title="iconTitle(it)">{{ it.icon }}</span>
-                  <span v-for="f in en.p.flags" class="fl" :title="iconTitle(f) + flagSuffix(f)">{{ f.icon }}</span>
+                  <span v-if="view.show.category && catIconOf(game.preset, en.p.category)"
+                    :title="en.p.category" class="fl">{{ catIconOf(game.preset, en.p.category) }}</span>
+                  <template v-if="view.show.items">
+                    <span v-for="it in en.p.inventory" :title="iconTitle(it)">{{ it.icon }}</span>
+                  </template>
+                  <template v-if="view.show.flags">
+                    <span v-for="f in en.p.flags" class="fl" :title="iconTitle(f) + flagSuffix(f)">{{ f.icon }}</span>
+                  </template>
                 </span>
               </div>
             </template>
@@ -752,6 +772,11 @@ const CONTROL_ACTIONS = ["roleblock", "redirect"];
 const DEFAULT_PRIORITY = STD_ACTIONS.map(a => a.key).filter(k => !CONTROL_ACTIONS.includes(k));
 const actionLabel = k => (STD_ACTIONS.find(a => a.key === k) || { label:k }).label;
 
+const DEFAULT_CAT_ICONS = {
+  Killing: "⚔️", Saving: "❤️", Protecting: "🛡️", Investigative: "👁️",
+  Disruption: "⚡", Voting: "🗳️", Utility: "🛠️", Survival: "🌱",
+};
+
 const STD_ITEMS = [
   { key:"gun",      icon:"🔫", name:"Gun",       description:"Grants a KP shot; consumed when picked as the kill's source." },
   { key:"vest",     icon:"🦺", name:"Vest",      description:"Consumable protection; absorbs one non-penetrating KP." },
@@ -813,6 +838,7 @@ function blankPreset() {
     categories: ["Killing","Saving","Protecting","Investigative","Disruption","Voting","Utility","Survival"],
     alignments: ["Town","Mafia","3rd Party"],
     priority: [...DEFAULT_PRIORITY],
+    categoryIcons: {},   // {categoryName: icon}; falls back to DEFAULT_CAT_ICONS
     customActions: [],   // {name, description} — log-only
     customItems: [],     // {name, icon, description}
     customFlags: [],     // {name, icon, description}
@@ -846,6 +872,8 @@ const app = createApp({
         const v = lsLoad(LS.view, { chain: [], folds: {} });
         if (!v.sorts) v.sorts = [{ key: v.leafSort || "roll", dir: v.leafDir || "asc" }];
         delete v.leafSort; delete v.leafDir;
+        v.show = { alignment: true, name: true, character: true, category: false,
+          items: true, flags: true, ...(v.show || {}) };
         return v;
       })(),
       modName: localStorage.getItem(LS.mod) || "mod",
@@ -863,6 +891,7 @@ const app = createApp({
         itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false, exportOpen: null,
+        rosterMenu: false,
       },
     };
   },
@@ -891,6 +920,11 @@ const app = createApp({
     },
     aliveCount() { return this.game.players.filter(p => p.alive).length; },
     currentPhase() { return this.game.phases[this.game.phases.length - 1]; },
+    gameFlagNames() {
+      const names = new Set();
+      this.game.players.forEach(p => p.flags.forEach(f => names.add(f.name)));
+      return [...names].sort();
+    },
     rosterFlat() { return [...this.game.players].sort((a, b) => a.order - b.order); },
     tabIdx() {
       const n = this.game.phases.length;
@@ -960,6 +994,7 @@ const app = createApp({
     isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
     /* older saves used game-specific preMerge/postMerge; fold into one abilities field */
     migrateAbilities(p) {
+      if (!p.categoryIcons) p.categoryIcons = {};
       p.characters.forEach(c => {
         if (!c.startItems) c.startItems = [];
         if (!c.startFlags) c.startFlags = [];
@@ -1313,6 +1348,21 @@ const app = createApp({
     evDelete(e) {
       const i = this.game.events.findIndex(x => x.id === e.id);
       this.apply("event removed: " + this.evLine(e), () => this.game.events.splice(i, 1));
+    },
+
+    /* ----- roster display ----- */
+    catIconOf(p, name) {
+      return (p && p.categoryIcons && p.categoryIcons[name]) || DEFAULT_CAT_ICONS[name] || "";
+    },
+    iconChoices(cur) {
+      return cur && !ICON_POOL.includes(cur) ? [cur, ...ICON_POOL] : ICON_POOL;
+    },
+    clearFlag(ev) {
+      const name = ev.target.value;
+      ev.target.value = "";
+      if (!name || !confirm(`Remove flag "${name}" from every player?`)) return;
+      this.apply("flag cleared for all: " + name, () =>
+        this.game.players.forEach(p => p.flags = p.flags.filter(f => f.name !== name)));
     },
 
     /* ----- roster grouping (view state, never synced) ----- */
