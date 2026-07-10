@@ -495,9 +495,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <template v-if="ui.ev.action==='investigate'">
                 <label v-for="rd in READS" style="white-space:nowrap">
                   <input type="checkbox" :value="rd" v-model="ui.ev.opts.reads"> {{ rd }}</label>
-                <select v-if="ui.ev.opts.reads.includes('parity')" v-model="ui.ev.opts.parityTargets" multiple size="4" title="parity: compared against these players">
-                  <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}</option>
-                </select>
+                <span v-if="ui.ev.opts.reads.includes('parity')" class="dim small">parity: first check locks the target, later checks compare vs the previous night's target(s); log twice for two locks</span>
                 <label v-if="actorHas('copcheck')"><input type="checkbox" v-model="ui.ev.opts.useCheck"> consumes 🔍 cop check</label>
               </template>
               <template v-if="ui.ev.action==='grant'">
@@ -1235,7 +1233,6 @@ const app = createApp({
       if (e.action === "save" && o.useSave) out.push("save item");
       if (e.action === "investigate") {
         out.push((o.reads || [o.read]).join("/"));
-        if (o.reads && o.reads.includes("parity") && o.parityTargets.length) out.push("vs " + o.parityTargets.join(", "));
         if (o.useCheck) out.push("cop check");
       }
       if (e.action === "grant") out.push(o.item);
@@ -1251,7 +1248,7 @@ const app = createApp({
       this.ui.ev = { id: null, actor: "", action: "kill", target: "", timeframe: "immediate", note: "",
         opts: { mode: "by", to: "", duration: 1, penetrating: false,
                 useGun: false, useSave: false, useCheck: false,
-                reads: ["alignment"], parityTargets: [], item: "gun" } };
+                reads: ["alignment"], item: "gun" } };
     },
     evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
     onActionChange() {
@@ -1287,11 +1284,8 @@ const app = createApp({
       const ev = this.ui.ev;
       if (!ev.actor) { this.ui.evErr = "Pick an actor."; return; }
       if (ev.action === "redirect" && !ev.opts.to) { this.ui.evErr = "Pick a redirect destination."; return; }
-      if (ev.action === "investigate") {
-        if (!ev.opts.reads.length) { this.ui.evErr = "Pick at least one thing to read."; return; }
-        if (ev.opts.reads.includes("parity") && !ev.opts.parityTargets.length) {
-          this.ui.evErr = "Parity needs at least one comparison target."; return;
-        }
+      if (ev.action === "investigate" && !ev.opts.reads.length) {
+        this.ui.evErr = "Pick at least one thing to read."; return;
       }
       if (ev.id) {
         const i = this.game.events.findIndex(x => x.id === ev.id);
@@ -1519,13 +1513,29 @@ const app = createApp({
             for (const rd of reads) {
               if (rd === "watch" || rd === "track") { parts.push({ label: rd, pending: true }); continue; }
               if (rd === "parity") {
-                const names = (e.opts.parityTargets || []).filter(n => n !== t);
-                const all = [t, ...names];
-                const seen = all.map(n => { const p2 = this.byName(n); return p2 ? shownOf(p2, "alignment") : "?"; });
-                const real = all.map(n => { const p2 = this.byName(n); return p2 ? p2.alignment : "?"; });
-                parts.push({ label: "parity vs " + names.join(", "),
-                  shown: new Set(seen).size === 1 ? "SAME" : "DIFFERENT",
-                  truth: new Set(real).size === 1 ? "SAME" : "DIFFERENT" });
+                /* first parity check locks the target (no result); later ones compare
+                   vs the actor's target(s) from their most recent earlier parity phase */
+                const phases = g.phases;
+                const curIdx = phases.findIndex(x => x.id === ph.id);
+                let prevTargets = null;
+                for (let i = curIdx - 1; i >= 0 && !prevTargets; i--) {
+                  const locked = g.events.filter(ev2 => ev2.actor === e.actor
+                    && ev2.action === "investigate" && ev2.status !== "cancelled"
+                    && (ev2.opts.reads || []).includes("parity") && ev2.target
+                    && this.landsOnId(ev2) === phases[i].id).map(ev2 => ev2.target);
+                  if (locked.length) prevTargets = [...new Set(locked)];
+                }
+                if (!prevTargets) {
+                  parts.push({ label: "parity", shown: "target locked — no result", truth: "target locked — no result" });
+                } else {
+                  const mineShown = shownOf(pl, "alignment"), mineTruth = pl.alignment;
+                  for (const n of prevTargets) {
+                    const p2 = this.byName(n);
+                    parts.push({ label: "parity vs " + n,
+                      shown: p2 && shownOf(p2, "alignment") === mineShown ? "SAME" : "DIFFERENT",
+                      truth: p2 && p2.alignment === mineTruth ? "SAME" : "DIFFERENT" });
+                  }
+                }
                 continue;
               }
               if (rd === "description") {
