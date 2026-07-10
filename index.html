@@ -252,8 +252,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       <h2>Action priority <span class="dim small">resolution order, top first</span></h2>
       <div class="row" style="margin-bottom:4px">
         <span class="dim small" style="width:20px;text-align:right">0</span>
-        <span style="width:220px">Redirect + Roleblock</span>
-        <span class="dim small">simultaneous control step, always first</span>
+        <span style="width:220px">Roleblock + Redirect</span>
+        <span class="dim small">simultaneous, always first; block cancels a blocked actor's redirect</span>
       </div>
       <div class="row" v-for="(k,i) in preset.priority" style="margin-bottom:4px">
         <span class="dim small" style="width:20px;text-align:right">{{ i+1 }}</span>
@@ -703,7 +703,8 @@ const STD_ACTIONS = [
   { key:"grant",       label:"Grant item" },        // opts: item key
 ];
 /* roleblock + redirect are a simultaneous control step, always first — not orderable.
-   Redirect maps apply before block targeting; a blocked redirector's redirect still stands. */
+   Roleblock takes priority: a redirect whose actor is a declared block target is
+   cancelled; surviving redirects retarget everything, including the blocks themselves. */
 const CONTROL_ACTIONS = ["roleblock", "redirect"];
 const DEFAULT_PRIORITY = STD_ACTIONS.map(a => a.key).filter(k => !CONTROL_ACTIONS.includes(k));
 const actionLabel = k => (STD_ACTIONS.find(a => a.key === k) || { label:k }).label;
@@ -1231,10 +1232,17 @@ const app = createApp({
       const killPos = order.indexOf("kill");
       let killsDone = false;
 
-      /* control pre-pass: redirect maps apply before any block targeting, and a
-         same-step block never cancels a redirect (simultaneity) */
+      /* control pre-pass — simultaneous, roleblock priority:
+         1. a redirect by a declared block target is cancelled (A blocks B → no redirect)
+         2. surviving redirects retarget everything, blocks included
+            (A blocks C while B redirects C→D → A blocks D) */
+      const declaredBlockTargets = new Set(sorted.filter(e => e.action === "roleblock").map(e => e.target));
       for (const e of sorted) {
         if (e.action !== "redirect") continue;
+        if (declaredBlockTargets.has(e.actor)) {
+          prop.skipped.push(this.evLine(e) + " — roleblocked (redirect cancelled)");
+          continue;
+        }
         const wT = W[e.target];
         if (!wT) continue;
         if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
