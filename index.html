@@ -132,7 +132,6 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       <div class="row" v-if="preset" style="margin-top:8px">
         <label>name</label><input v-model="preset.meta.name" style="width:220px">
         <label>theme</label><input v-model="preset.meta.theme" style="width:180px">
-        <label>version</label><input v-model.number="preset.meta.version" type="number" style="width:70px">
       </div>
     </div>
 
@@ -765,7 +764,7 @@ const SYNC = {
 
 function blankPreset() {
   return {
-    meta: { name: "New preset", theme: "", version: 1 },
+    meta: { name: "New preset", theme: "" },
     categories: ["Killing","Saving","Protecting","Investigative","Disruption","Voting","Utility","Survival"],
     alignments: ["Town","Mafia","3rd Party"],
     priority: [...DEFAULT_PRIORITY],
