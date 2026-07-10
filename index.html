@@ -566,7 +566,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <div v-for="x in ui.proposal.grants">➕ {{ x.target }} gets {{ x.item }}</div>
               <div v-for="x in ui.proposal.marks">🎯 {{ x.target }} flagged {{ x.flag }}{{ x.duration ? ' ('+x.duration+'ph)' : '' }}</div>
               <div v-for="x in ui.proposal.invulns">🛡️ {{ x.target }} invulnerable {{ x.duration }}ph</div>
-              <div v-for="x in ui.proposal.protUses">− {{ x.player }} {{ x.fromInventory ? 'consumes '+x.type : 'used external save' }}</div>
+              <div v-for="x in ui.proposal.protUses">− {{ x.player }} {{ x.fromInventory ? 'consumes own '+x.type : 'covered by '+(x.source || 'a')+"'s save (no item spent)" }}</div>
               <div v-for="x in ui.proposal.itemUses">− {{ x.player }} consumes {{ x.key }}</div>
             </template>
             <template v-if="ui.proposal.skipped.length">
@@ -1449,8 +1449,8 @@ const app = createApp({
               prop.deaths.push({ player: victim, by: hit.source, penetrating: true, guarding: via });
             } else if (vw.protections.length) {
               const pr = vw.protections.shift();
-              prop.protUses.push({ player: victim, type: pr.type, fromInventory: !!pr.fromInventory });
-              prop.saved.push({ player: victim, how: pr.type, vs: hit.source });
+              prop.protUses.push({ player: victim, type: pr.type, fromInventory: !!pr.fromInventory, source: pr.source });
+              prop.saved.push({ player: victim, how: pr.source ? "save from " + pr.source : pr.type, vs: hit.source });
             } else {
               diedNow.add(victim);
               prop.deaths.push({ player: victim, by: hit.source, guarding: via });
@@ -1492,7 +1492,7 @@ const app = createApp({
             wT.guards.push(e.actor);
             break;
           case "save":
-            if (!wT.stripped) wT.protections.push({ type: "save", fromInventory: false });
+            if (!wT.stripped) wT.protections.push({ type: "save", fromInventory: false, source: e.actor });
             else prop.skipped.push(this.evLine(e) + " — target stripped");
             if (e.opts.useSave) prop.itemUses.push({ player: e.actor, key: "save" });
             break;
