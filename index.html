@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grand Stage — theme mod console</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js"
+  integrity="sha384-W/1Fp/LgAYO/oTn9Gs+PbeWuMuq1eQCnUMPCeg8POmMYchhzxctjEqtbiCIxDOON"
+  crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#0e1116; --panel:#151b24; --panel2:#1c2430; --line:#2a3342;
+  --text:#dbe3ee; --dim:#8b98ab; --acc:#5eead4; --acc2:#818cf8;
+  --town:#60a5fa; --mafia:#f87171; --third:#fbbf24; --bad:#f87171; --good:#4ade80;
+}
+*{box-sizing:border-box}
+[v-cloak]{display:none}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:16px;padding:8px 16px;
+  background:linear-gradient(180deg,#131922,#10151d);border-bottom:1px solid var(--line)}
+.brand{font-weight:700;letter-spacing:.14em;color:var(--acc)}
+.brand .sub{font-weight:400;letter-spacing:0;color:var(--dim);font-size:12px;margin-left:8px}
+nav{display:flex;gap:4px;flex:1}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;
+  padding:5px 12px;cursor:pointer;font:inherit}
+button:hover:not(:disabled){border-color:var(--acc)}
+button:disabled{opacity:.4;cursor:default}
+button.on{background:var(--acc);color:#06251f;border-color:var(--acc);font-weight:600}
+button.primary{background:var(--acc2);border-color:var(--acc2);color:#0d1030;font-weight:600}
+button.danger{border-color:var(--bad);color:var(--bad);background:transparent}
+button.mini{padding:1px 7px;font-size:12px}
+button.ghost{background:transparent}
+input,select,textarea{background:#0c1017;color:var(--text);border:1px solid var(--line);
+  border-radius:6px;padding:5px 8px;font:inherit}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc2)}
+textarea{width:100%;resize:vertical}
+label{color:var(--dim);font-size:12px}
+.modwho{display:flex;align-items:center;gap:6px}
+.modwho input{width:90px}
+main{padding:16px;max-width:1500px;margin:0 auto}
+.viewwrap{max-width:980px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:15px;color:var(--acc);letter-spacing:.04em}
+.card h3{margin:14px 0 8px;font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.dim{color:var(--dim)}
+.small{font-size:12px}
+.spread{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.msg{color:var(--good);font-size:12px}
+.msg.err{color:var(--bad)}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-size:12px;font-weight:600}
+pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px;
+  white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:340px;overflow:auto}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:999px;padding:2px 9px;font-size:12px;margin:2px}
+.chip .x{cursor:pointer;color:var(--dim)}
+.chip .x:hover{color:var(--bad)}
+.gamewrap{display:grid;grid-template-columns:360px 1fr;gap:16px;align-items:start}
+@media (max-width:900px){.gamewrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+<header>
+  <div class="brand">GRAND STAGE<span class="sub">theme mod console</span></div>
+  <nav>
+    <button :class="{on:route==='presets'}" @click="route='presets'">Presets</button>
+    <button :class="{on:route==='setup'}" @click="route='setup'">New game</button>
+    <button :class="{on:route==='game'}" @click="route='game'" :disabled="!game">Game</button>
+    <button :class="{on:route==='data'}" @click="route='data'">Data</button>
+  </nav>
+  <div class="modwho"><label>mod</label><input v-model="modName" title="Your name in the activity log"></div>
+</header>
+<main>
+
+  <section v-if="route==='presets'" class="viewwrap">
+    <!-- PRESETS (step 2) -->
+    <div class="card"><h2>Presets</h2><p class="dim">Preset builder lands in step 2.</p></div>
+  </section>
+
+  <section v-if="route==='setup'" class="viewwrap">
+    <!-- SETUP (step 3) -->
+    <div class="card"><h2>New game</h2><p class="dim">Game setup lands in step 3.</p></div>
+  </section>
+
+  <section v-if="route==='game'">
+    <!-- GAME (steps 4-8) -->
+    <div v-if="!game" class="card viewwrap"><p class="dim">No game running. Start one from New game.</p></div>
+    <div v-else class="card viewwrap"><h2>Game</h2><p class="dim">Roster and phase log land in steps 4-6.</p></div>
+  </section>
+
+  <section v-if="route==='data'" class="viewwrap">
+    <div class="card">
+      <h2>Export</h2>
+      <div class="row">
+        <select v-model.number="ui.dataPresetIdx">
+          <option v-for="(p,i) in presets" :value="i">{{ p.meta.name }}</option>
+        </select>
+        <button @click="exportJson('preset')" :disabled="!presets.length">Copy preset JSON</button>
+        <button @click="downloadJson('preset')" :disabled="!presets.length">Download preset</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button @click="exportJson('game')" :disabled="!game">Copy game JSON</button>
+        <button @click="downloadJson('game')" :disabled="!game">Download game</button>
+      </div>
+      <p class="msg" v-if="ui.dataMsg">{{ ui.dataMsg }}</p>
+    </div>
+    <div class="card">
+      <h2>Import</h2>
+      <p class="dim small">Paste a preset or game JSON. Detected by shape; a game import replaces the current game.</p>
+      <textarea v-model="ui.importText" rows="8" placeholder='{"meta":{...}} or {"players":[...]}'></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" @click="importJson">Import</button>
+        <span class="msg" :class="{err:ui.importErr}" v-if="ui.importMsg">{{ ui.importMsg }}</span>
+      </div>
+    </div>
+    <div class="card" v-if="game">
+      <h2>Activity</h2>
+      <table><tr v-for="a in game.activity.slice().reverse().slice(0,40)">
+        <td class="dim small" style="white-space:nowrap">{{ a.at.slice(5,16).replace("T"," ") }}</td>
+        <td class="small">{{ a.op }}</td>
+        <td class="dim small">{{ a.by }}</td>
+      </tr></table>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   Grand Stage — theme mafia mod console.
+   Single authoritative game doc; every discrete change goes
+   through apply(), which logs activity, persists, and notifies
+   the sync seam (P2P transport plugs in at step 9).
+   ============================================================ */
+
+/* ---------- baked vocabulary (code, not JSON) ---------- */
+
+const ICON_POOL = ("⚔️ 🗡️ 🏹 💣 🔫 🧨 ☠️ 💀 🩸 🔥 ❄️ ⚡ 🌟 ✨ 🌙 ☀️ " +
+  "🛡️ 🦺 ➕ ❤️ 💔 🔗 ⛓️ 🎯 🎭 👁️ 🔍 🔮 📜 🗝️ 🔒 🔓 " +
+  "🐺 🦅 🐍 🦂 🕷️ 🌱 🍃 💠 🔵 🔴 🟢 🟡 🟣 ⚫ ⚪ 🔢").split(" ");
+
+const STD_ACTIONS = [
+  { key:"roleblock",   label:"Roleblock" },
+  { key:"redirect",    label:"Redirect" },          // opts: mode "by"|"at", to
+  { key:"strip",       label:"Strip protection" },
+  { key:"invuln",      label:"Grant invulnerability" }, // opts: duration
+  { key:"bodyguard",   label:"Bodyguard" },
+  { key:"save",        label:"Save" },
+  { key:"kill",        label:"Deliver KP" },        // opts: penetrating, useGun
+  { key:"investigate", label:"Investigate" },       // opts: read "alignment"|"category"
+  { key:"grant",       label:"Grant item" },        // opts: item key
+  { key:"mark",        label:"Mark / flag" },       // opts: flag key, duration
+];
+const DEFAULT_PRIORITY = STD_ACTIONS.map(a => a.key);
+const actionLabel = k => (STD_ACTIONS.find(a => a.key === k) || { label:k }).label;
+
+const STD_ITEMS = [
+  { key:"gun",      icon:"🔫", name:"Gun",       description:"Grants a KP shot; consumed when picked as the kill's source." },
+  { key:"vest",     icon:"🦺", name:"Vest",      description:"Consumable protection; absorbs one non-penetrating KP." },
+  { key:"save",     icon:"➕", name:"Save",      description:"Stored one-use protection, same as a vest in resolution." },
+  { key:"copcheck", icon:"🔍", name:"Cop check", description:"Stored investigation result." },
+];
+
+const STD_FLAGS = [
+  { key:"invuln",      icon:"🛡️", name:"Invulnerable", description:"Hard immunity; beats all KP incl. penetrating. Removed by strip." },
+  { key:"marked",      icon:"🎯", name:"Marked",       description:"Generic target mark." },
+  { key:"roleblocked", icon:"⛓️", name:"Roleblocked",  description:"Was roleblocked." },
+  { key:"stripped",    icon:"💔", name:"Stripped",     description:"Protection stripped." },
+  { key:"disguised",   icon:"🎭", name:"Disguised",    description:"Checks return the disguise, not the truth." },
+  { key:"stacks",      icon:"🔢", name:"Stacks",       description:"Numeric counter." },
+  { key:"cursed",      icon:"☠️", name:"Cursed",       description:"Generic negative status." },
+];
+
+/* ---------- helpers ---------- */
+
+const uid = () => crypto.randomUUID().slice(0, 8);
+const clone = o => JSON.parse(JSON.stringify(o));
+function shuffle(arr) {           // crypto Fisher-Yates
+  const r = [...arr];
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  return r;
+}
+function debounce(fn, ms) {
+  let t = null;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+/* ---------- persistence ---------- */
+
+const LS = { presets:"theme-mod-presets", game:"theme-mod-game", view:"theme-mod-view", mod:"theme-mod-modname" };
+function lsLoad(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch (e) { return fallback; }
+}
+const lsSave = (key, val) => localStorage.setItem(key, JSON.stringify(val));
+
+/* ---------- sync seam (transport plugs in at step 9) ---------- */
+
+const SYNC = {
+  send(doc) {},                      // broadcast full game doc
+  onReceive(cb) {},                  // incoming doc from host
+  peers() { return []; },
+  status() { return "solo"; },
+};
+
+/* ---------- document factories ---------- */
+
+function blankPreset() {
+  return {
+    meta: { name: "New preset", theme: "", version: 1 },
+    categories: ["Killing","Saving","Protecting","Investigative","Disruption","Voting","Utility","Survival"],
+    alignments: ["Town","Mafia","3rd Party"],
+    priority: [...DEFAULT_PRIORITY],
+    customActions: [],   // {name, description} — log-only
+    customItems: [],     // {name, icon, description}
+    customFlags: [],     // {name, icon, description}
+    characters: [],      // {name, category, alignment, themeOrigin, preMerge, postMerge, status, comments}
+  };
+}
+
+function blankGame(preset, players) {
+  return {
+    startedAt: new Date().toISOString(),
+    preset: clone(preset),          // self-contained: game carries its rules snapshot
+    players,                        // {name, character, alignment, category, order, alive, deathPhase, deathCause, inventory:[], flags:[]}
+    phases: [ { id: uid(), name: "N0", type: "night", committed: false, snapshot: null } ],
+    events: [],                     // flat; each event carries declaredPhase (phase id)
+    activity: [],
+  };
+}
+
+/* ---------- app ---------- */
+
+const { createApp } = Vue;
+
+const app = createApp({
+  data() {
+    return {
+      route: "presets",
+      presets: lsLoad(LS.presets, []),
+      game: lsLoad(LS.game, null),
+      view: lsLoad(LS.view, { chain: [], leafSort: "roll", folds: {} }),
+      modName: localStorage.getItem(LS.mod) || "mod",
+      ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS,
+      ui: {
+        dataPresetIdx: 0, dataMsg: "",
+        importText: "", importMsg: "", importErr: false,
+      },
+    };
+  },
+
+  methods: {
+    /* single mutation path: mutate inside fn, get attribution + persist + sync */
+    apply(op, fn) {
+      fn();
+      if (this.game) {
+        this.game.activity.push({ op, by: this.modName, at: new Date().toISOString() });
+      }
+      this.persistGame();
+      SYNC.send(this.game);
+    },
+    persistGame() { if (this.game) lsSave(LS.game, this.game); },
+
+    /* ----- data panel ----- */
+    exportBlob(kind) {
+      return kind === "preset"
+        ? JSON.stringify(this.presets[this.ui.dataPresetIdx], null, 2)
+        : JSON.stringify(this.game, null, 2);
+    },
+    async exportJson(kind) {
+      await navigator.clipboard.writeText(this.exportBlob(kind));
+      this.ui.dataMsg = "Copied.";
+      setTimeout(() => this.ui.dataMsg = "", 1500);
+    },
+    downloadJson(kind) {
+      const name = kind === "preset"
+        ? (this.presets[this.ui.dataPresetIdx].meta.name + ".preset.json")
+        : "game.json";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([this.exportBlob(kind)], { type: "application/json" }));
+      a.download = name.replace(/\s+/g, "-").toLowerCase();
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    importJson() {
+      this.ui.importErr = false;
+      let doc;
+      try { doc = JSON.parse(this.ui.importText); }
+      catch (e) { this.ui.importErr = true; this.ui.importMsg = "Not valid JSON."; return; }
+      if (doc && doc.meta && Array.isArray(doc.characters)) {
+        this.presets.push(doc);
+        this.ui.importMsg = `Preset "${doc.meta.name}" imported.`;
+      } else if (doc && Array.isArray(doc.players) && Array.isArray(doc.phases)) {
+        this.game = doc;
+        this.persistGame();
+        this.route = "game";
+        this.ui.importMsg = "Game imported and loaded.";
+      } else {
+        this.ui.importErr = true;
+        this.ui.importMsg = "Shape not recognised (neither preset nor game).";
+        return;
+      }
+      this.ui.importText = "";
+    },
+  },
+
+  watch: {
+    presets: { deep: true, handler: debounce(function () { lsSave(LS.presets, this.presets); }, 250) },
+    game:    { deep: true, handler: debounce(function () { this.persistGame(); }, 250) },
+    view:    { deep: true, handler: debounce(function () { lsSave(LS.view, this.view); }, 250) },
+    modName() { localStorage.setItem(LS.mod, this.modName); },
+  },
+
+  mounted() {
+    if (this.game) this.route = "game";
+  },
+});
+
+app.mount("#app");
+</script>
+</body>
+</html>
