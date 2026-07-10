@@ -716,14 +716,14 @@ const STD_ITEMS = [
   { key:"copcheck", icon:"🔍", name:"Cop check", description:"Stored investigation result." },
 ];
 
+/* baked flags = engine-aware ones only (plus the generic stacks counter);
+   theme flavour like "marked"/"cursed" belongs in preset customFlags */
 const STD_FLAGS = [
   { key:"invuln",      icon:"🛡️", name:"Invulnerable", description:"Hard immunity; beats all KP incl. penetrating. Removed by strip." },
-  { key:"marked",      icon:"🎯", name:"Marked",       description:"Generic target mark." },
   { key:"roleblocked", icon:"⛓️", name:"Roleblocked",  description:"Was roleblocked." },
   { key:"stripped",    icon:"💔", name:"Stripped",     description:"Protection stripped." },
   { key:"disguised",   icon:"🎭", name:"Disguised",    description:"Checks return the disguise, not the truth." },
   { key:"stacks",      icon:"🔢", name:"Stacks",       description:"Numeric counter." },
-  { key:"cursed",      icon:"☠️", name:"Cursed",       description:"Generic negative status." },
 ];
 
 /* ---------- helpers ---------- */
