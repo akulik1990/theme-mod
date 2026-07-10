@@ -164,10 +164,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <td colspan="5" style="background:var(--panel2)">
               <label>theme / origin</label>
               <input v-model="c.themeOrigin" style="width:220px;display:block">
-              <label>pre-merge ability</label>
-              <textarea v-model="c.preMerge" rows="2"></textarea>
-              <label>post-merge ability</label>
-              <textarea v-model="c.postMerge" rows="2"></textarea>
+              <label>abilities / description</label>
+              <textarea v-model="c.abilities" rows="4"></textarea>
               <label>comments</label>
               <textarea v-model="c.comments" rows="1"></textarea>
             </td>
@@ -773,7 +771,7 @@ function blankPreset() {
     customActions: [],   // {name, description} — log-only
     customItems: [],     // {name, icon, description}
     customFlags: [],     // {name, icon, description}
-    characters: [],      // {name, category, alignment, themeOrigin, preMerge, postMerge, status, comments}
+    characters: [],      // {name, category, alignment, themeOrigin, abilities, status, comments}
   };
 }
 
@@ -802,7 +800,7 @@ const app = createApp({
       view: lsLoad(LS.view, { chain: [], leafSort: "roll", folds: {} }),
       modName: localStorage.getItem(LS.mod) || "mod",
       ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS, DEFAULT_PRIORITY,
-      TSV_FIELDS: ["(skip)","name","category","alignment","themeOrigin","preMerge","postMerge","status","comments"],
+      TSV_FIELDS: ["(skip)","name","category","alignment","themeOrigin","abilities","status","comments"],
       ui: {
         dataPresetIdx: 0, dataMsg: "",
         importText: "", importMsg: "", importErr: false,
@@ -879,6 +877,14 @@ const app = createApp({
     actionLabel,
     /* blank/legacy statuses count as active; only explicit unused/removed/cut are excluded from the deal */
     isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
+    /* older saves used game-specific preMerge/postMerge; fold into one abilities field */
+    migrateAbilities(p) {
+      p.characters.forEach(c => {
+        if (c.abilities != null) return;
+        c.abilities = [c.preMerge, c.postMerge].filter(Boolean).join("\n\n");
+        delete c.preMerge; delete c.postMerge;
+      });
+    },
     migratePriority(p) {
       p.priority = (p.priority || []).filter(k => DEFAULT_PRIORITY.includes(k));
       DEFAULT_PRIORITY.forEach(k => { if (!p.priority.includes(k)) p.priority.push(k); });
@@ -909,7 +915,7 @@ const app = createApp({
     },
     addCharacter() {
       this.preset.characters.push({ name: "", category: "", alignment: "",
-        themeOrigin: "", preMerge: "", postMerge: "", status: "active", comments: "" });
+        themeOrigin: "", abilities: "", status: "active", comments: "" });
       this.ui.charOpen = this.preset.characters.length - 1;
     },
 
@@ -926,8 +932,9 @@ const app = createApp({
       });
       const GUESS = [
         [/^(char|name)/i, "name"], [/^cat/i, "category"], [/^align/i, "alignment"],
-        [/(origin|theme|game|source)/i, "themeOrigin"], [/pre/i, "preMerge"],
-        [/post/i, "postMerge"], [/^status/i, "status"], [/(comment|note)/i, "comments"],
+        [/(origin|theme|game|source)/i, "themeOrigin"],
+        [/(pre|post|abilit|mechanic|power|desc)/i, "abilities"],
+        [/^status/i, "status"], [/(comment|note)/i, "comments"],
       ];
       const map = headers.map(hd => {
         const g = GUESS.find(([re]) => re.test(hd));
@@ -940,8 +947,12 @@ const app = createApp({
       if (!map.includes("name")) { this.ui.tsvErr = "Map one column to name."; return; }
       const chars = rows.map(r => {
         const c = { name: "", category: "", alignment: "", themeOrigin: "",
-          preMerge: "", postMerge: "", status: "", comments: "" };
-        map.forEach((f, ci) => { if (f !== "(skip)") c[f] = r[ci]; });
+          abilities: "", status: "", comments: "" };
+        /* several columns may map to the same field (e.g. pre+post merge -> abilities): concatenate */
+        map.forEach((f, ci) => {
+          if (f === "(skip)" || !r[ci]) return;
+          c[f] = c[f] ? c[f] + "\n\n" + r[ci] : r[ci];
+        });
         c.status = this.isDealable(c) ? "active" : "unused";
         return c;
       }).filter(c => c.name);
@@ -1494,6 +1505,7 @@ const app = createApp({
       if (doc && doc.meta && Array.isArray(doc.characters)) {
         doc.characters.forEach(c => c.status = this.isDealable(c) ? "active" : "unused");
         this.migratePriority(doc);
+        this.migrateAbilities(doc);
         this.presets.push(doc);
         this.ui.importMsg = `Preset "${doc.meta.name}" imported.`;
       } else if (doc && Array.isArray(doc.players) && Array.isArray(doc.phases)) {
@@ -1526,6 +1538,7 @@ const app = createApp({
     }));
     /* migrate priority lists: control actions and mark are no longer orderable */
     this.presets.forEach(p => this.migratePriority(p));
+    this.presets.forEach(p => this.migrateAbilities(p));
     if (this.game) this.route = "game";
   },
 });
