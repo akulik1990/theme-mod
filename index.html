@@ -418,13 +418,14 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}{{ p.alive ? '' : ' †' }}</option>
               </select>
               <label>action</label>
-              <select v-model="ui.ev.action">
+              <select v-model="ui.ev.action" @change="ui.ev.action==='__new' && newCustomAction()">
                 <optgroup label="standard">
                   <option v-for="a in STD_ACTIONS" :value="a.key">{{ a.label }}</option>
                 </optgroup>
                 <optgroup label="custom (log-only)" v-if="game.preset.customActions.length">
                   <option v-for="a in game.preset.customActions" :value="'c:'+a.name">{{ a.name }}</option>
                 </optgroup>
+                <option value="__new">new custom action…</option>
               </select>
               <label>target</label>
               <select v-model="ui.ev.target">
@@ -998,6 +999,11 @@ const app = createApp({
       return s;
     },
     openPlayer(p) { this.ui.modalP = p; },
+    /* first use of a custom item/flag registers it on the game doc — shared with co-mods, reusable from the picker */
+    registerCustom(list, inst) {
+      if (!list.some(x => x.name === inst.name))
+        list.push({ icon: inst.icon, name: inst.name, description: inst.description });
+    },
     aliveToggled() {
       const p = this.mp;
       if (!p.alive && !p.deathPhase) p.deathPhase = this.currentPhase.name;
@@ -1010,6 +1016,7 @@ const app = createApp({
         if (!this.ui.itemName.trim()) return;
         inst = { key: "custom", icon: this.ui.itemIcon, name: this.ui.itemName.trim(),
           description: this.ui.itemDesc.trim(), custom: true };
+        this.registerCustom(this.game.preset.customItems, inst);
         this.ui.itemName = ""; this.ui.itemDesc = "";
       } else if (this.ui.itemSel.startsWith("preset:")) {
         const d = this.game.preset.customItems.find(x => x.name === this.ui.itemSel.slice(7));
@@ -1027,6 +1034,7 @@ const app = createApp({
         if (!this.ui.flagName.trim()) return;
         inst = { key: "custom", icon: this.ui.flagIcon, name: this.ui.flagName.trim(),
           description: this.ui.flagDesc.trim(), custom: true };
+        this.registerCustom(this.game.preset.customFlags, inst);
         this.ui.flagName = ""; this.ui.flagDesc = "";
       } else if (this.ui.flagSel.startsWith("preset:")) {
         const d = this.game.preset.customFlags.find(x => x.name === this.ui.flagSel.slice(7));
@@ -1095,6 +1103,17 @@ const app = createApp({
                 read: "alignment", item: "gun", flag: "marked", flagDur: null } };
     },
     evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
+    /* picking "new custom action…" registers it on the game doc so every mod's picker gets it */
+    newCustomAction() {
+      const name = (prompt("Custom action name (log-only):") || "").trim();
+      if (!name) { this.ui.ev.action = "kill"; return; }
+      const description = (prompt("Description (optional):") || "").trim();
+      if (!this.game.preset.customActions.some(a => a.name === name)) {
+        this.apply("custom action declared: " + name, () =>
+          this.game.preset.customActions.push({ name, description }));
+      }
+      this.ui.ev.action = "c:" + name;
+    },
     evSave() {
       const ev = this.ui.ev;
       if (!ev.actor) { this.ui.evErr = "Pick an actor."; return; }
@@ -1351,13 +1370,17 @@ const app = createApp({
         g.events.forEach(e => { if (prop.events.includes(e.id)) e.status = "resolved"; });
         ph.report = prop;
         ph.committed = true;
+        ph.committedAt = new Date().toISOString();
       });
       this.ui.proposal = null;
     },
 
+    /* latest by commit time, not phase order — snapshots only unwind in reverse commit order */
     isLatestCommitted(ph) {
       const committed = this.game.phases.filter(p => p.committed);
-      return committed.length && committed[committed.length - 1].id === ph.id;
+      if (!committed.length) return false;
+      const latest = committed.reduce((a, b) => ((a.committedAt || "") >= (b.committedAt || "") ? a : b));
+      return latest.id === ph.id;
     },
     unresolve() {
       const ph = this.activePhase, g = this.game;
@@ -1365,7 +1388,7 @@ const app = createApp({
       this.apply("phase un-resolved: " + ph.name, () => {
         g.players.splice(0, g.players.length, ...clone(ph.snapshot));
         g.events.forEach(e => { if (e.status === "resolved" && this.landsOnId(e) === ph.id) e.status = "pending"; });
-        ph.committed = false; ph.snapshot = null; ph.report = null;
+        ph.committed = false; ph.snapshot = null; ph.report = null; ph.committedAt = null;
       });
     },
 
