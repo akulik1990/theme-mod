@@ -448,10 +448,15 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <div class="row">
               <label>actor</label>
               <select v-model="ui.ev.actor" @change="syncItemDefaults">
-                <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}{{ p.alive ? '' : ' †' }}</option>
+                <optgroup label="factions">
+                  <option v-for="a in game.preset.alignments" :value="a">{{ a }}</option>
+                </optgroup>
+                <optgroup label="players">
+                  <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}{{ p.alive ? '' : ' †' }}</option>
+                </optgroup>
               </select>
               <label>action</label>
-              <select v-model="ui.ev.action" @change="ui.ev.action==='__new' && newCustomAction()">
+              <select v-model="ui.ev.action" @change="onActionChange">
                 <optgroup label="standard">
                   <option v-for="a in STD_ACTIONS" :value="a.key">{{ a.label }}</option>
                 </optgroup>
@@ -482,7 +487,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                   <option v-for="n in [1,2,3]" :value="n">{{ n }} phase{{ n>1?'s':'' }}</option>
                 </select>
               </template>
-              <template v-if="ui.ev.action==='kill'">
+              <template v-if="ui.ev.action==='kill' || ui.ev.action==='mafiakill'">
                 <label><input type="checkbox" v-model="ui.ev.opts.penetrating"> penetrating</label>
                 <label v-if="actorHas('gun')"><input type="checkbox" v-model="ui.ev.opts.useGun"> consumes 🔫 gun</label>
               </template>
@@ -545,7 +550,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <p class="dim small">Advisory. Review, then commit; player state only changes on commit.</p>
             <template v-if="ui.proposal.deaths.length">
               <h3>Deaths</h3>
-              <div v-for="d in ui.proposal.deaths">☠️ <b>{{ d.player }}</b> — {{ d.penetrating ? 'penetrating ' : '' }}KP from {{ d.by }}<span v-if="d.guarding" class="dim"> (took the hit for {{ d.guarding }})</span></div>
+              <div v-for="d in ui.proposal.deaths">☠️ <b>{{ d.player }}</b> — {{ d.lynch ? 'lynched' : (d.penetrating ? 'penetrating ' : '') + 'KP from ' + d.by }}<span v-if="d.guarding" class="dim"> (took the hit for {{ d.guarding }})</span></div>
             </template>
             <template v-if="ui.proposal.saved.length">
               <h3>Survived</h3>
@@ -729,7 +734,9 @@ const STD_ACTIONS = [
   { key:"invuln",      label:"Grant invulnerability" }, // opts: duration
   { key:"bodyguard",   label:"Bodyguard" },
   { key:"save",        label:"Save" },
+  { key:"mafiakill",   label:"Mafia KP" },          // faction kill; same resolution as kill
   { key:"kill",        label:"Deliver KP" },        // opts: penetrating, useGun
+  { key:"lynch",       label:"Lynch" },             // day mechanic; only invulnerability saves
   { key:"investigate", label:"Investigate" },       // opts: read "alignment"|"category"
   { key:"grant",       label:"Grant item" },        // opts: item key
 ];
@@ -934,8 +941,12 @@ const app = createApp({
       });
     },
     migratePriority(p) {
-      p.priority = (p.priority || []).filter(k => DEFAULT_PRIORITY.includes(k));
-      DEFAULT_PRIORITY.forEach(k => { if (!p.priority.includes(k)) p.priority.push(k); });
+      const keep = (p.priority || []).filter(k => DEFAULT_PRIORITY.includes(k));
+      /* insert newly-baked actions near their default position, not at the end */
+      DEFAULT_PRIORITY.forEach(k => {
+        if (!keep.includes(k)) keep.splice(Math.min(DEFAULT_PRIORITY.indexOf(k), keep.length), 0, k);
+      });
+      p.priority = keep;
     },
     dealableCount(p) { return p.characters.filter(c => c.name && this.isDealable(c)).length; },
     moveIn(arr, i, dir) { const j = i + dir; [arr[i], arr[j]] = [arr[j], arr[i]]; },
@@ -1230,6 +1241,13 @@ const app = createApp({
                 reads: ["alignment"], parityTargets: [], item: "gun" } };
     },
     evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
+    onActionChange() {
+      const a = this.ui.ev.action;
+      if (a === "__new") { this.newCustomAction(); return; }
+      /* faction defaults for the generalised actions */
+      if (a === "mafiakill" && !this.ui.ev.actor) this.ui.ev.actor = "Mafia";
+      if (a === "lynch" && !this.ui.ev.actor) this.ui.ev.actor = "Town";
+    },
     actorHas(key) {
       const p = this.byName(this.ui.ev.actor);
       return p && p.inventory.some(it => it.key === key);
@@ -1352,7 +1370,7 @@ const app = createApp({
         invulns: [], protUses: [], itemUses: [], logs: [], skipped: [], events: sorted.map(e => e.id) };
       const dead = new Set(g.players.filter(p => !p.alive).map(p => p.name));
       const diedNow = new Set();
-      const killPos = order.indexOf("kill");
+      const killPos = Math.max(order.indexOf("kill"), order.indexOf("mafiakill"));
       let killsDone = false;
       const visits = [];   // {actor, target} of every action that went through — feeds watch/track
 
@@ -1456,8 +1474,13 @@ const app = createApp({
             if (e.opts.useSave) prop.itemUses.push({ player: e.actor, key: "save" });
             break;
           case "kill":
+          case "mafiakill":
             wT.kp.push({ source: e.actor, penetrating: !!e.opts.penetrating });
             if (e.opts.useGun) prop.itemUses.push({ player: e.actor, key: "gun" });
+            break;
+          case "lynch":
+            if (wT.invuln && !wT.stripped) prop.saved.push({ player: t, how: "immune", vs: "lynch" });
+            else { diedNow.add(t); prop.deaths.push({ player: t, by: e.actor, lynch: true }); }
             break;
           case "investigate": {
             const pl = this.byName(t);
@@ -1540,8 +1563,9 @@ const app = createApp({
           const pl = this.byName(d.player);
           if (!pl) return;
           pl.alive = false; pl.deathPhase = ph.name;
-          pl.deathCause = (d.penetrating ? "penetrating " : "") + "KP from " + d.by
-            + (d.guarding ? " (guarding " + d.guarding + ")" : "");
+          pl.deathCause = d.lynch ? "lynched"
+            : (d.penetrating ? "penetrating " : "") + "KP from " + d.by
+              + (d.guarding ? " (guarding " + d.guarding + ")" : "");
         });
         prop.protUses.filter(u => u.fromInventory).forEach(u => {
           const pl = this.byName(u.player);
@@ -1597,9 +1621,10 @@ const app = createApp({
       const r = ph.report;
       const out = [`=== ${ph.name} ===`];
       const fallen = [...new Set(r.deaths.map(d => d.player))];
+      const lynched = new Set(r.deaths.filter(d => d.lynch).map(d => d.player));
       if (fallen.length) fallen.forEach(name => {
         const pl = this.byName(name);
-        out.push(`||${name}${pl ? " (" + pl.character + ")" : ""} died||`);
+        out.push(`||${name}${pl ? " (" + pl.character + ")" : ""} ${lynched.has(name) ? "was lynched" : "died"}||`);
       });
       else out.push("||no one died||");
       r.saved.forEach(s => out.push(`||${s.player} was attacked and survived||`));
@@ -1715,6 +1740,7 @@ const app = createApp({
       this.migratePriority(this.preset);
       this.migrateAbilities(this.preset);
     }
+    if (this.game) this.migratePriority(this.game.preset);   // running games get new baked actions too
     if (this.game) this.route = "game";
   },
 });
