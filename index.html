@@ -171,6 +171,24 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <textarea v-model="c.abilities" rows="4"></textarea>
               <label>comments</label>
               <textarea v-model="c.comments" rows="1"></textarea>
+              <div class="row" style="margin-top:6px">
+                <label>starts with</label>
+                <span v-for="(it,ii) in c.startItems" class="chip">{{ it.icon }} {{ it.name }}
+                  <span class="x" @click="c.startItems.splice(ii,1)">✕</span></span>
+                <span v-for="(f,fi) in c.startFlags" class="chip">{{ f.icon }} {{ f.name }}
+                  <span class="x" @click="c.startFlags.splice(fi,1)">✕</span></span>
+                <select @change="addStartThing(c, $event)">
+                  <option value="">add…</option>
+                  <optgroup label="items">
+                    <option v-for="it in STD_ITEMS" :value="'item:'+it.key">{{ it.icon }} {{ it.name }}</option>
+                    <option v-for="it in preset.customItems" :value="'citem:'+it.name">{{ it.icon }} {{ it.name }}</option>
+                  </optgroup>
+                  <optgroup label="flags">
+                    <option v-for="f in STD_FLAGS" :value="'flag:'+f.key">{{ f.icon }} {{ f.name }}</option>
+                    <option v-for="f in preset.customFlags" :value="'cflag:'+f.name">{{ f.icon }} {{ f.name }}</option>
+                  </optgroup>
+                </select>
+              </div>
             </td>
           </tr>
         </template>
@@ -472,10 +490,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <label v-if="actorHas('save')"><input type="checkbox" v-model="ui.ev.opts.useSave"> consumes ➕ save</label>
               </template>
               <template v-if="ui.ev.action==='investigate'">
-                <label>read</label>
-                <select v-model="ui.ev.opts.read">
-                  <option value="alignment">alignment</option>
-                  <option value="category">category</option>
+                <label v-for="rd in READS" style="white-space:nowrap">
+                  <input type="checkbox" :value="rd" v-model="ui.ev.opts.reads"> {{ rd }}</label>
+                <select v-if="ui.ev.opts.reads.includes('parity')" v-model="ui.ev.opts.parityTargets" multiple size="4" title="parity: compared against these players">
+                  <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}</option>
                 </select>
                 <label v-if="actorHas('copcheck')"><input type="checkbox" v-model="ui.ev.opts.useCheck"> consumes 🔍 cop check</label>
               </template>
@@ -535,8 +553,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             </template>
             <template v-if="ui.proposal.checks.length">
               <h3>Checks</h3>
-              <div v-for="c in ui.proposal.checks">🔍 {{ c.actor }} reads <b>{{ c.target }}</b>: {{ c.shown }}
-                <span class="badge warn" v-if="c.disguised">disguised — truth: {{ c.truth }}</span>
+              <div v-for="c in ui.proposal.checks">🔍 {{ c.actor }} reads <b>{{ c.target }}</b>:
+                <template v-for="(p,pi) in c.parts">{{ pi ? '; ' : '' }}{{ p.label }} = {{ p.shown }}
+                  <span class="badge warn" v-if="p.shown !== p.truth">disguised — truth: {{ p.truth }}</span>
+                </template>
                 <span class="badge bad" v-if="c.actorDied">actor died this phase</span>
               </div>
             </template>
@@ -813,6 +833,7 @@ const app = createApp({
       view: lsLoad(LS.view, { chain: [], leafSort: "roll", folds: {} }),
       modName: localStorage.getItem(LS.mod) || "mod",
       ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS, DEFAULT_PRIORITY,
+      READS: ["alignment", "character", "category", "description", "parity", "watch", "track"],
       TSV_FIELDS: ["(skip)","name","category","alignment","themeOrigin","abilities","status","comments"],
       ui: {
         dataMsg: "",
@@ -905,6 +926,8 @@ const app = createApp({
     /* older saves used game-specific preMerge/postMerge; fold into one abilities field */
     migrateAbilities(p) {
       p.characters.forEach(c => {
+        if (!c.startItems) c.startItems = [];
+        if (!c.startFlags) c.startFlags = [];
         if (c.abilities != null) return;
         c.abilities = [c.preMerge, c.postMerge].filter(Boolean).join("\n\n");
         delete c.preMerge; delete c.postMerge;
@@ -968,8 +991,30 @@ const app = createApp({
     },
     addCharacter() {
       this.preset.characters.push({ name: "", category: "", alignment: "",
-        themeOrigin: "", abilities: "", status: "active", comments: "" });
+        themeOrigin: "", abilities: "", status: "active", comments: "",
+        startItems: [], startFlags: [] });
       this.ui.charOpen = this.preset.characters.length - 1;
+    },
+    addStartThing(c, ev) {
+      const v = ev.target.value;
+      ev.target.value = "";
+      if (!v) return;
+      const kind = v.slice(0, v.indexOf(":")), key = v.slice(v.indexOf(":") + 1);
+      if (kind === "item" || kind === "citem") {
+        const d = kind === "item" ? STD_ITEMS.find(x => x.key === key)
+          : this.preset.customItems.find(x => x.name === key);
+        c.startItems.push(kind === "item"
+          ? { ...d, custom: false }
+          : { key: "custom", icon: d.icon, name: d.name, description: d.description, custom: true });
+      } else {
+        const d = kind === "flag" ? STD_FLAGS.find(x => x.key === key)
+          : this.preset.customFlags.find(x => x.name === key);
+        const inst = kind === "flag"
+          ? { ...d, custom: false, duration: null }
+          : { key: "custom", icon: d.icon, name: d.name, description: d.description, custom: true, duration: null };
+        if (inst.key === "stacks") inst.count = 1;
+        c.startFlags.push(inst);
+      }
     },
 
     /* ----- TSV importer ----- */
@@ -1000,7 +1045,7 @@ const app = createApp({
       if (!map.includes("name")) { this.ui.tsvErr = "Map one column to name."; return; }
       const chars = rows.map(r => {
         const c = { name: "", category: "", alignment: "", themeOrigin: "",
-          abilities: "", status: "", comments: "" };
+          abilities: "", status: "", comments: "", startItems: [], startFlags: [] };
         /* several columns may map to the same field (e.g. pre+post merge -> abilities): concatenate */
         map.forEach((f, ci) => {
           if (f === "(skip)" || !r[ci]) return;
@@ -1045,7 +1090,7 @@ const app = createApp({
         return { name: a.name, character: a.character,
           alignment: c.alignment || "", category: c.category || "",
           order: i + 1, alive: true, deathPhase: null, deathCause: "",
-          inventory: [], flags: [] };
+          inventory: clone(c.startItems || []), flags: clone(c.startFlags || []) };
       });
       this.game = blankGame(this.setupPreset, players);
       this.apply("game started", () => {});
@@ -1164,7 +1209,11 @@ const app = createApp({
       if (e.action === "invuln") out.push(o.duration + "ph");
       if (e.action === "kill") { if (o.penetrating) out.push("penetrating"); if (o.useGun) out.push("gun"); }
       if (e.action === "save" && o.useSave) out.push("save item");
-      if (e.action === "investigate") { out.push(o.read); if (o.useCheck) out.push("cop check"); }
+      if (e.action === "investigate") {
+        out.push((o.reads || [o.read]).join("/"));
+        if (o.reads && o.reads.includes("parity") && o.parityTargets.length) out.push("vs " + o.parityTargets.join(", "));
+        if (o.useCheck) out.push("cop check");
+      }
       if (e.action === "grant") out.push(o.item);
       return out.join(", ");
     },
@@ -1178,7 +1227,7 @@ const app = createApp({
       this.ui.ev = { id: null, actor: "", action: "kill", target: "", timeframe: "immediate", note: "",
         opts: { mode: "by", to: "", duration: 1, penetrating: false,
                 useGun: false, useSave: false, useCheck: false,
-                read: "alignment", item: "gun" } };
+                reads: ["alignment"], parityTargets: [], item: "gun" } };
     },
     evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
     actorHas(key) {
@@ -1207,6 +1256,12 @@ const app = createApp({
       const ev = this.ui.ev;
       if (!ev.actor) { this.ui.evErr = "Pick an actor."; return; }
       if (ev.action === "redirect" && !ev.opts.to) { this.ui.evErr = "Pick a redirect destination."; return; }
+      if (ev.action === "investigate") {
+        if (!ev.opts.reads.length) { this.ui.evErr = "Pick at least one thing to read."; return; }
+        if (ev.opts.reads.includes("parity") && !ev.opts.parityTargets.length) {
+          this.ui.evErr = "Parity needs at least one comparison target."; return;
+        }
+      }
       if (ev.id) {
         const i = this.game.events.findIndex(x => x.id === ev.id);
         this.apply("event edited: " + this.evLine(ev), () => this.game.events.splice(i, 1, clone(ev)));
@@ -1299,6 +1354,21 @@ const app = createApp({
       const diedNow = new Set();
       const killPos = order.indexOf("kill");
       let killsDone = false;
+      const visits = [];   // {actor, target} of every action that went through — feeds watch/track
+
+      /* what an investigation sees for a dimension, disguise applied */
+      const shownOf = (pl, dim) => {
+        const disg = pl.flags.find(f => f.key === "disguised" && f.param && f.param.value);
+        if (disg) {
+          if (disg.param.as === dim) return disg.param.value;
+          if (disg.param.as === "character") {
+            if (dim === "character") return disg.param.value;
+            const cd = g.preset.characters.find(c => c.name === disg.param.value);
+            if (cd && cd[dim]) return cd[dim];
+          }
+        }
+        return dim === "character" ? pl.character : pl[dim];
+      };
 
       /* control pre-pass — simultaneous, roleblock priority:
          1. a redirect by a declared block target is cancelled (A blocks B → no redirect)
@@ -1314,6 +1384,7 @@ const app = createApp({
         const wT = W[e.target];
         if (!wT) continue;
         if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
+        visits.push({ actor: e.actor, target: e.target });
       }
 
       const effTarget = e => {
@@ -1353,6 +1424,7 @@ const app = createApp({
         if (!killsDone && p > killPos) resolveKills();
         if (p === 99) {
           prop.logs.push({ actor: e.actor, text: this.evLine(e) + (e.note ? " — " + e.note : "") });
+          if (e.target) visits.push({ actor: e.actor, target: e.target });
           continue;
         }
         const wA = W[e.actor];
@@ -1361,6 +1433,7 @@ const app = createApp({
         const t = effTarget(e);
         const wT = W[t];
         if (!wT) { prop.skipped.push(this.evLine(e) + " — no valid target"); continue; }
+        visits.push({ actor: e.actor, target: t });
         switch (e.action) {
           case "roleblock":
             wT.blocked = true;
@@ -1388,19 +1461,31 @@ const app = createApp({
             break;
           case "investigate": {
             const pl = this.byName(t);
-            const read = e.opts.read || "alignment";
-            const truth = pl ? pl[read] : "?";
-            let shown = truth;
-            const disg = pl && pl.flags.find(f => f.key === "disguised" && f.param && f.param.value);
-            if (disg) {
-              if (disg.param.as === read) shown = disg.param.value;
-              else if (disg.param.as === "character") {
-                const cd = g.preset.characters.find(c => c.name === disg.param.value);
-                if (cd && cd[read]) shown = cd[read];
+            if (!pl) { prop.skipped.push(this.evLine(e) + " — unknown target"); break; }
+            const reads = (e.opts.reads && e.opts.reads.length) ? e.opts.reads : [e.opts.read || "alignment"];
+            const parts = [];
+            for (const rd of reads) {
+              if (rd === "watch" || rd === "track") { parts.push({ label: rd, pending: true }); continue; }
+              if (rd === "parity") {
+                const names = (e.opts.parityTargets || []).filter(n => n !== t);
+                const all = [t, ...names];
+                const seen = all.map(n => { const p2 = this.byName(n); return p2 ? shownOf(p2, "alignment") : "?"; });
+                const real = all.map(n => { const p2 = this.byName(n); return p2 ? p2.alignment : "?"; });
+                parts.push({ label: "parity vs " + names.join(", "),
+                  shown: new Set(seen).size === 1 ? "SAME" : "DIFFERENT",
+                  truth: new Set(real).size === 1 ? "SAME" : "DIFFERENT" });
+                continue;
               }
+              if (rd === "description") {
+                const cd = g.preset.characters.find(c => c.name === shownOf(pl, "character"));
+                const cdT = g.preset.characters.find(c => c.name === pl.character);
+                parts.push({ label: rd, shown: (cd && cd.abilities) || "(none)", truth: (cdT && cdT.abilities) || "(none)" });
+                continue;
+              }
+              parts.push({ label: rd, shown: shownOf(pl, rd),
+                truth: rd === "character" ? pl.character : pl[rd] });
             }
-            prop.checks.push({ actor: e.actor, target: t, read, truth, shown,
-              disguised: shown !== truth, actorDied: diedNow.has(e.actor) });
+            prop.checks.push({ actor: e.actor, target: t, parts, actorDied: diedNow.has(e.actor) });
             if (e.opts.useCheck) prop.itemUses.push({ player: e.actor, key: "copcheck" });
             break;
           }
@@ -1410,6 +1495,16 @@ const app = createApp({
         }
       }
       if (!killsDone) resolveKills();
+      /* watch/track read the whole night's visits, so they fill in last */
+      for (const c of prop.checks) for (const part of c.parts || []) {
+        if (!part.pending) continue;
+        delete part.pending;
+        const who = part.label === "watch"
+          ? visits.filter(v => v.target === c.target && v.actor !== c.actor && v.actor !== c.target).map(v => v.actor)
+          : visits.filter(v => v.actor === c.target && v.target !== c.target).map(v => v.target);
+        part.label = part.label === "watch" ? "visited by" : "visited";
+        part.shown = part.truth = [...new Set(who)].join(", ") || "no one";
+      }
       return prop;
     },
 
@@ -1430,6 +1525,7 @@ const app = createApp({
 
     commitPhase() {
       const ph = this.activePhase, prop = this.ui.proposal, g = this.game;
+      if (ph.committed) { this.ui.proposal = null; return; }
       this.apply("phase committed: " + ph.name, () => {
         ph.snapshot = clone(g.players);
         /* expire old durations first, so newly applied flags live their full term */
@@ -1507,7 +1603,10 @@ const app = createApp({
       });
       else out.push("||no one died||");
       r.saved.forEach(s => out.push(`||${s.player} was attacked and survived||`));
-      r.checks.forEach(c => out.push(`check: ||${c.actor} → ${c.target}: ${c.shown}||`));
+      r.checks.forEach(c => {
+        const body = c.parts ? c.parts.map(p => `${p.label}: ${p.shown}`).join("; ") : c.shown;
+        out.push(`check: ||${c.actor} → ${c.target}: ${body}||`);
+      });
       r.logs.forEach(l => out.push(`||${l.text}||`));
       return out.join("\n");
     },
