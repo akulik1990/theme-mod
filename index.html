@@ -165,8 +165,6 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           </tr>
           <tr v-if="ui.charOpen===i">
             <td colspan="5" style="background:var(--panel2)">
-              <label>theme / origin</label>
-              <input v-model="c.themeOrigin" style="width:220px;display:block">
               <label>abilities / description</label>
               <textarea v-model="c.abilities" rows="4"></textarea>
               <label>comments</label>
@@ -313,12 +311,12 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <td class="dim">{{ i+1 }}</td>
           <td>{{ a.name }}</td>
           <td>
-            <select :value="a.character" @change="setupSwap(i, $event.target.value)">
-              <option v-for="c in setupPreset.characters" :value="c.name">{{ c.name }}</option>
+            <select :value="a.charIdx" @change="setupSwap(i, +$event.target.value)">
+              <option v-for="(c,ci) in setupPreset.characters" :value="ci">{{ c.name }}{{ isDealable(c) ? '' : ' (unused)' }}</option>
             </select>
           </td>
-          <td>{{ charByName(a.character).alignment }}</td>
-          <td>{{ charByName(a.character).category }}</td>
+          <td>{{ setupPreset.characters[a.charIdx].alignment }}</td>
+          <td>{{ setupPreset.characters[a.charIdx].category }}</td>
         </tr>
       </table>
       <div class="row" style="margin-top:10px">
@@ -811,7 +809,7 @@ function blankPreset() {
     customActions: [],   // {name, description} — log-only
     customItems: [],     // {name, icon, description}
     customFlags: [],     // {name, icon, description}
-    characters: [],      // {name, category, alignment, themeOrigin, abilities, status, comments}
+    characters: [],      // {name, category, alignment, abilities, status, comments, startItems, startFlags} — duplicates allowed
   };
 }
 
@@ -841,7 +839,7 @@ const app = createApp({
       modName: localStorage.getItem(LS.mod) || "mod",
       ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS, DEFAULT_PRIORITY,
       READS: ["alignment", "character", "category", "description", "parity", "watch", "track"],
-      TSV_FIELDS: ["(skip)","name","category","alignment","themeOrigin","abilities","status","comments"],
+      TSV_FIELDS: ["(skip)","name","category","alignment","abilities","status","comments"],
       ui: {
         dataMsg: "",
         importText: "", importMsg: "", importErr: false,
@@ -906,14 +904,32 @@ const app = createApp({
     },
     rosterEntries() {
       const out = [];
+      const flagish = c => !c.startsWith("field:");
       const walk = (players, chain, path, depth) => {
         if (!chain.length) { this.sortPlayers(players).forEach(p => out.push({ t: "p", p, depth })); return; }
-        for (const gr of this.partition(players, chain[0])) {
-          if (!gr.members.length) continue;
+        /* consecutive flag/item conditions form ONE level: bucket per flag in chain
+           order (first match wins), a single "(ungrouped)" at the end */
+        let groups, rest;
+        if (flagish(chain[0])) {
+          let n = 1;
+          while (n < chain.length && flagish(chain[n])) n++;
+          groups = this.partitionMulti(players, chain.slice(0, n));
+          rest = chain.slice(n);
+        } else {
+          groups = this.partition(players, chain[0]);
+          rest = chain.slice(1);
+        }
+        groups = groups.filter(gr => gr.members.length);
+        /* a level that only says "(ungrouped)" adds nothing — skip the header */
+        if (groups.length === 1 && groups[0].label === "(ungrouped)") {
+          walk(groups[0].members, rest, path + ">~", depth);
+          return;
+        }
+        for (const gr of groups) {
           const p2 = path + ">" + gr.label;
           const folded = !!this.view.folds[p2];
           out.push({ t: "h", label: gr.label, count: gr.members.length, depth, path: p2, folded });
-          if (!folded) walk(gr.members, chain.slice(1), p2, depth + 1);
+          if (!folded) walk(gr.members, rest, p2, depth + 1);
         }
       };
       walk(this.game.players, this.view.chain, "", 0);
@@ -1002,7 +1018,7 @@ const app = createApp({
     },
     addCharacter() {
       this.preset.characters.push({ name: "", category: "", alignment: "",
-        themeOrigin: "", abilities: "", status: "active", comments: "",
+        abilities: "", status: "active", comments: "",
         startItems: [], startFlags: [] });
       this.ui.charOpen = this.preset.characters.length - 1;
     },
@@ -1041,7 +1057,6 @@ const app = createApp({
       });
       const GUESS = [
         [/^(char|name)/i, "name"], [/^cat/i, "category"], [/^align/i, "alignment"],
-        [/(origin|theme|game|source)/i, "themeOrigin"],
         [/(pre|post|abilit|mechanic|power|desc)/i, "abilities"],
         [/^status/i, "status"], [/(comment|note)/i, "comments"],
       ];
@@ -1055,7 +1070,7 @@ const app = createApp({
       const { rows, map } = this.ui.tsv;
       if (!map.includes("name")) { this.ui.tsvErr = "Map one column to name."; return; }
       const chars = rows.map(r => {
-        const c = { name: "", category: "", alignment: "", themeOrigin: "",
+        const c = { name: "", category: "", alignment: "",
           abilities: "", status: "", comments: "", startItems: [], startFlags: [] };
         /* several columns may map to the same field (e.g. pre+post merge -> abilities): concatenate */
         map.forEach((f, ci) => {
@@ -1070,35 +1085,33 @@ const app = createApp({
       this.ui.tsv = null; this.ui.tsvText = "";
     },
 
-    /* ----- setup ----- */
-    charByName(name) {
-      return (this.setupPreset && this.setupPreset.characters.find(c => c.name === name)) || {};
-    },
+    /* ----- setup (characters referenced by index — duplicates allowed) ----- */
     setupShuffle() {
       this.ui.setupErr = "";
       const names = this.setupNames;
       const dupes = names.filter((n, i) => names.indexOf(n) !== i);
       if (dupes.length) { this.ui.setupErr = "Duplicate names: " + [...new Set(dupes)].join(", "); return; }
       /* unused/cut characters stay in the preset for reference but are never dealt; manual swap-in still allowed */
-      const chars = this.setupPreset.characters.filter(c => c.name && this.isDealable(c));
+      const pool = this.setupPreset.characters
+        .map((c, i) => ({ c, i })).filter(x => x.c.name && this.isDealable(x.c));
       if (!names.length) { this.ui.setupErr = "No player names."; return; }
-      if (names.length > chars.length) {
-        this.ui.setupErr = `${names.length} players but only ${chars.length} characters in the preset.`;
+      if (names.length > pool.length) {
+        this.ui.setupErr = `${names.length} players but only ${pool.length} characters in the preset.`;
         return;
       }
-      const dealt = shuffle(chars).slice(0, names.length);
-      this.ui.assign = names.map((n, i) => ({ name: n, character: dealt[i].name }));
+      const dealt = shuffle(pool).slice(0, names.length);
+      this.ui.assign = names.map((n, i) => ({ name: n, charIdx: dealt[i].i }));
     },
-    setupSwap(i, newChar) {
-      const other = this.ui.assign.findIndex(a => a.character === newChar);
-      if (other !== -1 && other !== i) this.ui.assign[other].character = this.ui.assign[i].character;
-      this.ui.assign[i].character = newChar;
+    setupSwap(i, newIdx) {
+      const other = this.ui.assign.findIndex(a => a.charIdx === newIdx);
+      if (other !== -1 && other !== i) this.ui.assign[other].charIdx = this.ui.assign[i].charIdx;
+      this.ui.assign[i].charIdx = newIdx;
     },
     setupStart() {
       if (this.game && !confirm("Replace the current game?")) return;
       const players = this.ui.assign.map((a, i) => {
-        const c = this.charByName(a.character);
-        return { name: a.name, character: a.character,
+        const c = this.setupPreset.characters[a.charIdx];
+        return { name: a.name, character: c.name,
           alignment: c.alignment || "", category: c.category || "",
           order: i + 1, alive: true, deathPhase: null, deathCause: "",
           inventory: clone(c.startItems || []), flags: clone(c.startFlags || []) };
@@ -1337,6 +1350,22 @@ const app = createApp({
         { label: key, members: players.filter(has) },
         { label: "(ungrouped)", members: players.filter(p => !has(p)) },
       ];
+    },
+    /* several flag/item conditions as one partition: first matching bucket wins */
+    partitionMulti(players, conds) {
+      const taken = new Set();
+      const out = conds.map(cond => {
+        const kind = cond.slice(0, cond.indexOf(":"));
+        const key = cond.slice(cond.indexOf(":") + 1);
+        const has = p => kind === "flag"
+          ? p.flags.some(f => f.name === key)
+          : p.inventory.some(it => it.name === key);
+        const members = players.filter(p => !taken.has(p.name) && has(p));
+        members.forEach(p => taken.add(p.name));
+        return { label: key, members };
+      });
+      out.push({ label: "(ungrouped)", members: players.filter(p => !taken.has(p.name)) });
+      return out;
     },
 
     /* ----- resolver (advisory) ----- */
