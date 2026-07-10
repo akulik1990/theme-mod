@@ -339,7 +339,20 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           </div>
           <!-- GROUPBY -->
           <div class="gctl">
+            <div class="row" v-for="(s,si) in view.sorts" style="margin-bottom:3px">
+              <label style="width:38px;text-align:right">{{ si ? 'then' : 'sort' }}</label>
+              <select v-model="s.key">
+                <option value="roll">roll order</option>
+                <option value="align">alignment</option>
+                <option value="char">character A–Z</option>
+                <option value="alive">alive first</option>
+              </select>
+              <button class="mini" @click="s.dir = s.dir === 'desc' ? 'asc' : 'desc'"
+                :title="s.dir === 'desc' ? 'descending' : 'ascending'">{{ s.dir === 'desc' ? '▼' : '▲' }}</button>
+              <button v-if="si" class="mini danger" @click="view.sorts.splice(si,1)">✕</button>
+            </div>
             <div class="row" v-for="(c,i) in view.chain" style="margin-bottom:3px">
+              <label style="width:38px;text-align:right">{{ i ? 'then' : 'group' }}</label>
               <select :value="c" @change="view.chain[i]=$event.target.value">
                 <option v-for="o in condOptions" :value="o.v">{{ o.label }}</option>
               </select>
@@ -348,19 +361,12 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <button class="mini danger" @click="view.chain.splice(i,1)">✕</button>
             </div>
             <div class="row" style="margin-bottom:6px">
-              <select v-model="ui.addCond" @change="addGrouping">
-                <option value="">+ group by…</option>
-                <option v-for="o in condOptions" :value="o.v">{{ o.label }}</option>
-              </select>
-              <label>sort</label>
-              <select v-model="view.leafSort">
-                <option value="roll">roll order</option>
-                <option value="align">alignment</option>
-                <option value="char">character A–Z</option>
-                <option value="alive">alive first</option>
-              </select>
-              <button class="mini" @click="view.leafDir = view.leafDir === 'desc' ? 'asc' : 'desc'"
-                :title="view.leafDir === 'desc' ? 'descending' : 'ascending'">{{ view.leafDir === 'desc' ? '▼' : '▲' }}</button>
+              <template v-if="ui.addMenu">
+                <button class="mini" @click="view.chain.push(condOptions[0].v); ui.addMenu=false">+ grouping</button>
+                <button class="mini" @click="view.sorts.push({key:'char',dir:'asc'}); ui.addMenu=false">+ sort column</button>
+                <button class="mini ghost" @click="ui.addMenu=false">cancel</button>
+              </template>
+              <button v-else class="mini" @click="ui.addMenu=true" title="add grouping or sort column">＋</button>
             </div>
             <div class="dim small" v-if="view.chain.length" style="margin-bottom:6px">{{ breadcrumb }}</div>
           </div>
@@ -836,7 +842,12 @@ const app = createApp({
       route: "presets",
       preset: lsLoad(LS.preset, null),   // single working copy; presets persist as exported files
       game: lsLoad(LS.game, null),
-      view: lsLoad(LS.view, { chain: [], leafSort: "roll", folds: {} }),
+      view: (() => {
+        const v = lsLoad(LS.view, { chain: [], folds: {} });
+        if (!v.sorts) v.sorts = [{ key: v.leafSort || "roll", dir: v.leafDir || "asc" }];
+        delete v.leafSort; delete v.leafDir;
+        return v;
+      })(),
       modName: localStorage.getItem(LS.mod) || "mod",
       ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS, DEFAULT_PRIORITY,
       READS: ["alignment", "character", "category", "description", "parity", "watch", "track"],
@@ -851,7 +862,7 @@ const app = createApp({
         modalP: null, tab: null, ev: null, evErr: "", proposal: null,
         itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
-        flagDur: null, disgAs: "character", disgVal: "", addCond: "", exportOpen: null,
+        flagDur: null, disgAs: "character", disgVal: "", addMenu: false, exportOpen: null,
       },
     };
   },
@@ -1305,24 +1316,26 @@ const app = createApp({
     },
 
     /* ----- roster grouping (view state, never synced) ----- */
-    addGrouping() {
-      if (this.ui.addCond) this.view.chain.push(this.ui.addCond);
-      this.ui.addCond = "";
-    },
     toggleFold(path) { this.view.folds[path] = !this.view.folds[path]; },
     sortPlayers(list) {
-      const s = this.view.leafSort;
+      const sorts = this.view.sorts.length ? this.view.sorts : [{ key: "roll", dir: "asc" }];
       const alignRank = p => {
         const i = this.game.preset.alignments.indexOf(p.alignment);
         return i === -1 ? 99 : i;
       };
-      const out = [...list].sort((a, b) => {
-        if (s === "align") return alignRank(a) - alignRank(b) || a.order - b.order;
-        if (s === "char") return a.character.localeCompare(b.character);
-        if (s === "alive") return (b.alive - a.alive) || (a.order - b.order);
+      const cmpBy = {
+        roll: (a, b) => a.order - b.order,
+        align: (a, b) => alignRank(a) - alignRank(b),
+        char: (a, b) => a.character.localeCompare(b.character),
+        alive: (a, b) => b.alive - a.alive,
+      };
+      return [...list].sort((a, b) => {
+        for (const s of sorts) {
+          const c = cmpBy[s.key](a, b);
+          if (c) return s.dir === "desc" ? -c : c;
+        }
         return a.order - b.order;
       });
-      return this.view.leafDir === "desc" ? out.reverse() : out;
     },
     partition(players, cond) {
       const kind = cond.slice(0, cond.indexOf(":"));
