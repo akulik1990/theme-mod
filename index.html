@@ -353,7 +353,19 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             </template>
           </div>
         </div>
-        <!-- EXPORTS (step 8) -->
+        <!-- EXPORTS -->
+        <div class="card">
+          <div class="row">
+            <button class="mini" :class="{on:ui.exportOpen==='reveal'}" @click="ui.exportOpen = ui.exportOpen==='reveal' ? null : 'reveal'">Reveal</button>
+            <button class="mini" :class="{on:ui.exportOpen==='stats'}" @click="ui.exportOpen = ui.exportOpen==='stats' ? null : 'stats'">Stats</button>
+            <button class="mini" :class="{on:ui.exportOpen==='full'}" @click="ui.exportOpen = ui.exportOpen==='full' ? null : 'full'">Full export</button>
+            <input v-model="game.winner" placeholder="winner (manual call)" style="width:130px" class="small">
+          </div>
+          <template v-if="ui.exportOpen">
+            <pre class="paste" style="margin-top:8px">{{ exportText }}</pre>
+            <button class="mini" @click="copyText(exportText)">Copy</button>
+          </template>
+        </div>
       </div>
 
       <div class="phasecol">
@@ -765,6 +777,7 @@ function blankPreset() {
 function blankGame(preset, players) {
   return {
     startedAt: new Date().toISOString(),
+    winner: "",
     preset: clone(preset),          // self-contained: game carries its rules snapshot
     players,                        // {name, character, alignment, category, order, alive, deathPhase, deathCause, inventory:[], flags:[]}
     phases: [ { id: uid(), name: "N0", type: "night", committed: false, snapshot: null } ],
@@ -796,7 +809,7 @@ const app = createApp({
         modalP: null, tab: null, ev: null, evErr: "", proposal: null,
         itemSel: "gun", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "marked", flagIcon: "🎯", flagName: "", flagDesc: "",
-        flagDur: null, disgAs: "character", disgVal: "", addCond: "",
+        flagDur: null, disgAs: "character", disgVal: "", addCond: "", exportOpen: null,
       },
     };
   },
@@ -851,6 +864,11 @@ const app = createApp({
       };
       walk(this.game.players, this.view.chain, "", 0);
       return out;
+    },
+    exportText() {
+      if (this.ui.exportOpen === "reveal") return this.revealText();
+      if (this.ui.exportOpen === "stats") return this.statsText();
+      return this.fullText();
     },
   },
 
@@ -1367,6 +1385,36 @@ const app = createApp({
       return out.join("\n");
     },
     async copyText(t) { await navigator.clipboard.writeText(t); },
+
+    /* ----- exports ----- */
+    rollOrder() { return [...this.game.players].sort((a, b) => a.order - b.order); },
+    revealText() {
+      return ["**Reveal**",
+        ...this.rollOrder().map(p => `${p.order}. ${p.name} — ${p.character} (${p.alignment})`),
+      ].join("\n");
+    },
+    statsText() {
+      const lines = this.rollOrder().map(p => p.name);
+      lines.push("");
+      this.game.phases.filter(ph => ph.committed && ph.report).forEach(ph => {
+        const fallen = [...new Set(ph.report.deaths.map(d => d.player))];
+        lines.push(`${ph.name}: ${fallen.length ? fallen.join(", ") : "none"}`);
+      });
+      lines.push("", `${this.game.winner || "?"} Win`);
+      return lines.join("\n");
+    },
+    fullText() {
+      const g = this.game;
+      const out = [`**${g.preset.meta.name}**` + (g.preset.meta.theme ? ` — ${g.preset.meta.theme}` : ""),
+        g.winner ? `**${g.winner.toUpperCase()} WINS**` : "**GAME IN PROGRESS**", ""];
+      out.push("**Players**");
+      this.rollOrder().forEach(p => out.push(`${p.order}. ${p.name}`));
+      out.push("", this.revealText(), "");
+      g.phases.filter(ph => ph.committed && ph.report).forEach(ph => {
+        out.push(this.phaseText(ph), "");
+      });
+      return out.join("\n").trim();
+    },
 
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
     apply(op, fn) {
