@@ -219,8 +219,46 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   </section>
 
   <section v-if="route==='setup'" class="viewwrap">
-    <!-- SETUP (step 3) -->
-    <div class="card"><h2>New game</h2><p class="dim">Game setup lands in step 3.</p></div>
+    <!-- SETUP -->
+    <div class="card">
+      <h2>New game</h2>
+      <div class="row">
+        <label>preset</label>
+        <select v-model.number="ui.setupPresetIdx">
+          <option v-for="(p,i) in presets" :value="i">{{ p.meta.name }} ({{ p.characters.length }} characters)</option>
+        </select>
+      </div>
+      <h3>Players <span class="dim">one per line or comma-separated</span></h3>
+      <textarea v-model="ui.namesText" rows="8" placeholder="Akshin&#10;Maria&#10;…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" @click="setupShuffle" :disabled="!setupPreset">Shuffle characters onto names</button>
+        <span class="dim small" v-if="setupNames.length">{{ setupNames.length }} players</span>
+        <span class="msg err" v-if="ui.setupErr">{{ ui.setupErr }}</span>
+      </div>
+    </div>
+
+    <div class="card" v-if="ui.assign">
+      <h2>Review deal <span class="dim small">pick a taken character to swap the two players</span></h2>
+      <table>
+        <tr><th>#</th><th>player</th><th>character</th><th>alignment</th><th>category</th></tr>
+        <tr v-for="(a,i) in ui.assign">
+          <td class="dim">{{ i+1 }}</td>
+          <td>{{ a.name }}</td>
+          <td>
+            <select :value="a.character" @change="setupSwap(i, $event.target.value)">
+              <option v-for="c in setupPreset.characters" :value="c.name">{{ c.name }}</option>
+            </select>
+          </td>
+          <td>{{ charByName(a.character).alignment }}</td>
+          <td>{{ charByName(a.character).category }}</td>
+        </tr>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" @click="setupStart">Start game</button>
+        <button class="ghost" @click="setupShuffle">Re-shuffle</button>
+        <span class="dim small" v-if="game">starting will replace the current game</span>
+      </div>
+    </div>
   </section>
 
   <section v-if="route==='game'">
@@ -394,12 +432,17 @@ const app = createApp({
         importText: "", importMsg: "", importErr: false,
         presetIdx: 0, charOpen: null, catNew: "", alignNew: "",
         tsvText: "", tsv: null, tsvErr: "", tsvMode: "append",
+        setupPresetIdx: 0, namesText: "", setupErr: "", assign: null,
       },
     };
   },
 
   computed: {
     preset() { return this.presets[this.ui.presetIdx] || null; },
+    setupPreset() { return this.presets[this.ui.setupPresetIdx] || null; },
+    setupNames() {
+      return this.ui.namesText.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    },
   },
 
   methods: {
@@ -467,6 +510,44 @@ const app = createApp({
       if (this.ui.tsvMode === "replace") this.preset.characters = chars;
       else this.preset.characters.push(...chars);
       this.ui.tsv = null; this.ui.tsvText = "";
+    },
+
+    /* ----- setup ----- */
+    charByName(name) {
+      return (this.setupPreset && this.setupPreset.characters.find(c => c.name === name)) || {};
+    },
+    setupShuffle() {
+      this.ui.setupErr = "";
+      const names = this.setupNames;
+      const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+      if (dupes.length) { this.ui.setupErr = "Duplicate names: " + [...new Set(dupes)].join(", "); return; }
+      const chars = this.setupPreset.characters.filter(c => c.name);
+      if (!names.length) { this.ui.setupErr = "No player names."; return; }
+      if (names.length > chars.length) {
+        this.ui.setupErr = `${names.length} players but only ${chars.length} characters in the preset.`;
+        return;
+      }
+      const dealt = shuffle(chars).slice(0, names.length);
+      this.ui.assign = names.map((n, i) => ({ name: n, character: dealt[i].name }));
+    },
+    setupSwap(i, newChar) {
+      const other = this.ui.assign.findIndex(a => a.character === newChar);
+      if (other !== -1 && other !== i) this.ui.assign[other].character = this.ui.assign[i].character;
+      this.ui.assign[i].character = newChar;
+    },
+    setupStart() {
+      if (this.game && !confirm("Replace the current game?")) return;
+      const players = this.ui.assign.map((a, i) => {
+        const c = this.charByName(a.character);
+        return { name: a.name, character: a.character,
+          alignment: c.alignment || "", category: c.category || "",
+          order: i + 1, alive: true, deathPhase: null, deathCause: "",
+          inventory: [], flags: [] };
+      });
+      this.game = blankGame(this.setupPreset, players);
+      this.apply("game started", () => {});
+      this.ui.assign = null; this.ui.namesText = "";
+      this.route = "game";
     },
 
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
