@@ -77,8 +77,145 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 <main>
 
   <section v-if="route==='presets'" class="viewwrap">
-    <!-- PRESETS (step 2) -->
-    <div class="card"><h2>Presets</h2><p class="dim">Preset builder lands in step 2.</p></div>
+    <!-- PRESETS -->
+    <div class="card">
+      <div class="spread">
+        <h2>Presets</h2>
+        <div class="row">
+          <select v-model.number="ui.presetIdx" v-if="presets.length">
+            <option v-for="(p,i) in presets" :value="i">{{ p.meta.name }} ({{ p.characters.length }})</option>
+          </select>
+          <button @click="presetNew">New</button>
+          <button v-if="preset" @click="presetDup">Duplicate</button>
+          <button v-if="preset" class="danger" @click="presetDelete">Delete</button>
+        </div>
+      </div>
+      <div class="row" v-if="preset" style="margin-top:8px">
+        <label>name</label><input v-model="preset.meta.name" style="width:220px">
+        <label>theme</label><input v-model="preset.meta.theme" style="width:180px">
+        <label>version</label><input v-model.number="preset.meta.version" type="number" style="width:70px">
+      </div>
+    </div>
+
+    <template v-if="preset">
+    <div class="card">
+      <div class="spread">
+        <h2>Characters <span class="dim small">{{ preset.characters.length }}</span></h2>
+        <button @click="addCharacter">+ character</button>
+      </div>
+      <table v-if="preset.characters.length">
+        <tr><th>name</th><th>category</th><th>alignment</th><th>origin</th><th>status</th><th></th></tr>
+        <template v-for="(c,i) in preset.characters" :key="i">
+          <tr>
+            <td><input v-model="c.name" style="width:140px"></td>
+            <td><select v-model="c.category"><option value=""></option><option v-for="k in preset.categories">{{ k }}</option></select></td>
+            <td><select v-model="c.alignment"><option value=""></option><option v-for="k in preset.alignments">{{ k }}</option></select></td>
+            <td><input v-model="c.themeOrigin" style="width:110px"></td>
+            <td><input v-model="c.status" style="width:80px"></td>
+            <td style="white-space:nowrap">
+              <button class="mini ghost" @click="ui.charOpen = ui.charOpen===i ? null : i">{{ ui.charOpen===i ? '▾' : '✎' }}</button>
+              <button class="mini danger" @click="preset.characters.splice(i,1)">✕</button>
+            </td>
+          </tr>
+          <tr v-if="ui.charOpen===i">
+            <td colspan="6" style="background:var(--panel2)">
+              <label>pre-merge ability</label>
+              <textarea v-model="c.preMerge" rows="2"></textarea>
+              <label>post-merge ability</label>
+              <textarea v-model="c.postMerge" rows="2"></textarea>
+              <label>comments</label>
+              <textarea v-model="c.comments" rows="1"></textarea>
+            </td>
+          </tr>
+        </template>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Import characters (paste from Sheets)</h2>
+      <p class="dim small">Copy the columns straight out of the spreadsheet (TSV). First row must be headers.</p>
+      <textarea v-model="ui.tsvText" rows="5" placeholder="Character&#9;Category&#9;Alignment&#9;..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button @click="tsvParse">Parse</button>
+        <span class="msg err" v-if="ui.tsvErr">{{ ui.tsvErr }}</span>
+      </div>
+      <template v-if="ui.tsv">
+        <h3>Column mapping</h3>
+        <div class="row">
+          <span v-for="(hd,ci) in ui.tsv.headers" class="chip">
+            {{ hd }} →
+            <select v-model="ui.tsv.map[ci]">
+              <option v-for="f in TSV_FIELDS" :value="f">{{ f }}</option>
+            </select>
+          </span>
+        </div>
+        <h3>Preview ({{ ui.tsv.rows.length }} rows)</h3>
+        <table>
+          <tr><th v-for="hd in ui.tsv.headers">{{ hd }}</th></tr>
+          <tr v-for="r in ui.tsv.rows.slice(0,5)"><td v-for="cell in r" class="small">{{ cell.slice(0,60) }}</td></tr>
+        </table>
+        <div class="row" style="margin-top:8px">
+          <select v-model="ui.tsvMode">
+            <option value="append">append to characters</option>
+            <option value="replace">replace all characters</option>
+          </select>
+          <button class="primary" @click="tsvImport">Import {{ ui.tsv.rows.length }} characters</button>
+        </div>
+      </template>
+    </div>
+
+    <div class="card">
+      <h2>Lists</h2>
+      <h3>Categories</h3>
+      <div>
+        <span v-for="(k,i) in preset.categories" class="chip">{{ k }}<span class="x" @click="preset.categories.splice(i,1)">✕</span></span>
+        <input v-model="ui.catNew" placeholder="add…" style="width:110px" @keyup.enter="pushTrim(preset.categories,'catNew')">
+      </div>
+      <h3>Alignments</h3>
+      <div>
+        <span v-for="(k,i) in preset.alignments" class="chip">{{ k }}<span class="x" @click="preset.alignments.splice(i,1)">✕</span></span>
+        <input v-model="ui.alignNew" placeholder="add…" style="width:110px" @keyup.enter="pushTrim(preset.alignments,'alignNew')">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Custom vocabulary <span class="dim small">log-only; the engine never resolves these</span></h2>
+      <h3>Actions</h3>
+      <div class="row" v-for="(a,i) in preset.customActions" style="margin-bottom:4px">
+        <input v-model="a.name" placeholder="name" style="width:170px">
+        <input v-model="a.description" placeholder="description" class="grow">
+        <button class="mini danger" @click="preset.customActions.splice(i,1)">✕</button>
+      </div>
+      <button class="mini" @click="preset.customActions.push({name:'',description:''})">+ action</button>
+      <h3>Items</h3>
+      <div class="row" v-for="(a,i) in preset.customItems" style="margin-bottom:4px">
+        <select v-model="a.icon"><option v-for="ic in ICON_POOL" :value="ic">{{ ic }}</option></select>
+        <input v-model="a.name" placeholder="name" style="width:170px">
+        <input v-model="a.description" placeholder="description" class="grow">
+        <button class="mini danger" @click="preset.customItems.splice(i,1)">✕</button>
+      </div>
+      <button class="mini" @click="preset.customItems.push({icon:'📜',name:'',description:''})">+ item</button>
+      <h3>Flags</h3>
+      <div class="row" v-for="(a,i) in preset.customFlags" style="margin-bottom:4px">
+        <select v-model="a.icon"><option v-for="ic in ICON_POOL" :value="ic">{{ ic }}</option></select>
+        <input v-model="a.name" placeholder="name" style="width:170px">
+        <input v-model="a.description" placeholder="description" class="grow">
+        <button class="mini danger" @click="preset.customFlags.splice(i,1)">✕</button>
+      </div>
+      <button class="mini" @click="preset.customFlags.push({icon:'🎯',name:'',description:''})">+ flag</button>
+    </div>
+
+    <div class="card">
+      <h2>Action priority <span class="dim small">resolution order, top first</span></h2>
+      <div class="row" v-for="(k,i) in preset.priority" style="margin-bottom:4px">
+        <span class="dim small" style="width:20px;text-align:right">{{ i+1 }}</span>
+        <span style="width:220px">{{ actionLabel(k) }}</span>
+        <button class="mini" :disabled="i===0" @click="moveIn(preset.priority,i,-1)">▲</button>
+        <button class="mini" :disabled="i===preset.priority.length-1" @click="moveIn(preset.priority,i,1)">▼</button>
+      </div>
+      <button class="mini ghost" @click="preset.priority=[...DEFAULT_PRIORITY]">reset to default</button>
+    </div>
+    </template>
   </section>
 
   <section v-if="route==='setup'" class="viewwrap">
@@ -250,15 +387,88 @@ const app = createApp({
       game: lsLoad(LS.game, null),
       view: lsLoad(LS.view, { chain: [], leafSort: "roll", folds: {} }),
       modName: localStorage.getItem(LS.mod) || "mod",
-      ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS,
+      ICON_POOL, STD_ACTIONS, STD_ITEMS, STD_FLAGS, DEFAULT_PRIORITY,
+      TSV_FIELDS: ["(skip)","name","category","alignment","themeOrigin","preMerge","postMerge","status","comments"],
       ui: {
         dataPresetIdx: 0, dataMsg: "",
         importText: "", importMsg: "", importErr: false,
+        presetIdx: 0, charOpen: null, catNew: "", alignNew: "",
+        tsvText: "", tsv: null, tsvErr: "", tsvMode: "append",
       },
     };
   },
 
+  computed: {
+    preset() { return this.presets[this.ui.presetIdx] || null; },
+  },
+
   methods: {
+    actionLabel,
+    moveIn(arr, i, dir) { const j = i + dir; [arr[i], arr[j]] = [arr[j], arr[i]]; },
+    pushTrim(arr, uiKey) {
+      const v = this.ui[uiKey].trim();
+      if (v && !arr.includes(v)) arr.push(v);
+      this.ui[uiKey] = "";
+    },
+
+    /* ----- preset builder ----- */
+    presetNew() {
+      this.presets.push(blankPreset());
+      this.ui.presetIdx = this.presets.length - 1;
+    },
+    presetDup() {
+      const c = clone(this.preset);
+      c.meta.name += " copy";
+      this.presets.push(c);
+      this.ui.presetIdx = this.presets.length - 1;
+    },
+    presetDelete() {
+      if (!confirm(`Delete preset "${this.preset.meta.name}"?`)) return;
+      this.presets.splice(this.ui.presetIdx, 1);
+      this.ui.presetIdx = 0;
+    },
+    addCharacter() {
+      this.preset.characters.push({ name: "", category: "", alignment: "",
+        themeOrigin: "", preMerge: "", postMerge: "", status: "", comments: "" });
+      this.ui.charOpen = this.preset.characters.length - 1;
+    },
+
+    /* ----- TSV importer ----- */
+    tsvParse() {
+      this.ui.tsvErr = ""; this.ui.tsv = null;
+      const lines = this.ui.tsvText.split("\n").map(l => l.replace(/\r$/, "")).filter(l => l.trim());
+      if (lines.length < 2) { this.ui.tsvErr = "Need a header row plus at least one data row."; return; }
+      const headers = lines[0].split("\t").map(s => s.trim());
+      const rows = lines.slice(1).map(l => {
+        const cells = l.split("\t").map(s => s.trim());
+        while (cells.length < headers.length) cells.push("");
+        return cells.slice(0, headers.length);
+      });
+      const GUESS = [
+        [/^(char|name)/i, "name"], [/^cat/i, "category"], [/^align/i, "alignment"],
+        [/(origin|theme|game|source)/i, "themeOrigin"], [/pre/i, "preMerge"],
+        [/post/i, "postMerge"], [/^status/i, "status"], [/(comment|note)/i, "comments"],
+      ];
+      const map = headers.map(hd => {
+        const g = GUESS.find(([re]) => re.test(hd));
+        return g ? g[1] : "(skip)";
+      });
+      this.ui.tsv = { headers, rows, map };
+    },
+    tsvImport() {
+      const { rows, map } = this.ui.tsv;
+      if (!map.includes("name")) { this.ui.tsvErr = "Map one column to name."; return; }
+      const chars = rows.map(r => {
+        const c = { name: "", category: "", alignment: "", themeOrigin: "",
+          preMerge: "", postMerge: "", status: "", comments: "" };
+        map.forEach((f, ci) => { if (f !== "(skip)") c[f] = r[ci]; });
+        return c;
+      }).filter(c => c.name);
+      if (this.ui.tsvMode === "replace") this.preset.characters = chars;
+      else this.preset.characters.push(...chars);
+      this.ui.tsv = null; this.ui.tsvText = "";
+    },
+
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
     apply(op, fn) {
       fn();
@@ -321,6 +531,7 @@ const app = createApp({
   },
 
   mounted() {
+    window.$vm = this;            // console access for debugging
     if (this.game) this.route = "game";
   },
 });
