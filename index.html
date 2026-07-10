@@ -586,8 +586,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <span v-for="(it,i) in mp.inventory" class="chip" :title="it.description">{{ it.icon }} {{ it.name }}
             <span class="x" @click="apply('item removed: '+it.name+' from '+mp.name, () => mp.inventory.splice(i,1))">✕</span></span>
         </div>
+        <div v-if="!mp.inventory.length" class="dim small">nothing held</div>
         <div class="row" style="margin-top:6px">
           <select v-model="ui.itemSel">
+            <option value="">add item…</option>
             <option v-for="it in STD_ITEMS" :value="it.key">{{ it.icon }} {{ it.name }}</option>
             <option v-for="it in game.preset.customItems" :value="'preset:'+it.name">{{ it.icon }} {{ it.name }}</option>
             <option value="custom">custom…</option>
@@ -597,8 +599,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <input v-model="ui.itemName" placeholder="name" style="width:120px">
             <input v-model="ui.itemDesc" placeholder="description" style="width:150px">
           </template>
-          <button class="mini" @click="addItem">add</button>
+          <button class="mini" @click="addItem" :disabled="!ui.itemSel">add</button>
         </div>
+        <p class="dim small" v-if="itemSelDesc" style="margin:4px 0 0">{{ itemSelDesc }}</p>
         <h3>Flags</h3>
         <div>
           <span v-for="(f,i) in mp.flags" class="chip" :title="f.description">{{ f.icon }} {{ f.name }}<span
@@ -609,8 +612,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             </template>
             <span class="x" @click="apply('flag removed: '+f.name+' from '+mp.name, () => mp.flags.splice(i,1))">✕</span></span>
         </div>
+        <div v-if="!mp.flags.length" class="dim small">no flags</div>
         <div class="row" style="margin-top:6px">
           <select v-model="ui.flagSel">
+            <option value="">add flag…</option>
             <option v-for="f in STD_FLAGS" :value="f.key">{{ f.icon }} {{ f.name }}</option>
             <option v-for="f in game.preset.customFlags" :value="'preset:'+f.name">{{ f.icon }} {{ f.name }}</option>
             <option value="custom">custom…</option>
@@ -632,8 +637,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             </select>
             <input v-model="ui.disgVal" placeholder="value" style="width:110px">
           </template>
-          <button class="mini" @click="addFlag">add</button>
+          <button class="mini" @click="addFlag" :disabled="!ui.flagSel">add</button>
         </div>
+        <p class="dim small" v-if="flagSelDesc" style="margin:4px 0 0">{{ flagSelDesc }}</p>
         <h3 class="dim small" style="margin-top:16px">manual edits here cover role steal, moves, links, on-death follow-ups</h3>
       </div>
     </div>
@@ -805,8 +811,8 @@ const app = createApp({
         tsvText: "", tsv: null, tsvErr: "", tsvMode: "append",
         namesText: "", setupErr: "", assign: null,
         modalP: null, tab: null, ev: null, evErr: "", proposal: null,
-        itemSel: "gun", itemIcon: "📜", itemName: "", itemDesc: "",
-        flagSel: "marked", flagIcon: "🎯", flagName: "", flagDesc: "",
+        itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
+        flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addCond: "", exportOpen: null,
       },
     };
@@ -818,6 +824,22 @@ const app = createApp({
       return this.ui.namesText.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
     },
     mp() { return this.ui.modalP; },
+    itemSelDesc() {
+      const s = this.ui.itemSel;
+      if (!s || s === "custom") return "";
+      const d = s.startsWith("preset:")
+        ? this.game.preset.customItems.find(x => x.name === s.slice(7))
+        : STD_ITEMS.find(x => x.key === s);
+      return d ? d.description : "";
+    },
+    flagSelDesc() {
+      const s = this.ui.flagSel;
+      if (!s || s === "custom") return "";
+      const d = s.startsWith("preset:")
+        ? this.game.preset.customFlags.find(x => x.name === s.slice(7))
+        : STD_FLAGS.find(x => x.key === s);
+      return d ? d.description : "";
+    },
     aliveCount() { return this.game.players.filter(p => p.alive).length; },
     currentPhase() { return this.game.phases[this.game.phases.length - 1]; },
     rosterFlat() { return [...this.game.players].sort((a, b) => a.order - b.order); },
@@ -1072,6 +1094,7 @@ const app = createApp({
         inst = { key: d.key, icon: d.icon, name: d.name, description: d.description, custom: false };
       }
       this.apply("item added: " + inst.name + " to " + p.name, () => p.inventory.push(inst));
+      this.ui.itemSel = "";
     },
     addFlag() {
       const p = this.mp;
@@ -1093,6 +1116,7 @@ const app = createApp({
       if (inst.key === "stacks") inst.count = 1;
       if (inst.key === "disguised") inst.param = { as: this.ui.disgAs, value: this.ui.disgVal.trim() };
       this.apply("flag added: " + inst.name + " to " + p.name, () => p.flags.push(inst));
+      this.ui.flagSel = "";
     },
 
     /* ----- phases + events + landing engine ----- */
