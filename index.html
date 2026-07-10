@@ -139,25 +139,31 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     <template v-if="preset">
     <div class="card">
       <div class="spread">
-        <h2>Characters <span class="dim small">{{ preset.characters.length }}</span></h2>
+        <h2>Characters <span class="dim small">{{ dealableCount(preset) }} in deal / {{ preset.characters.length }} total</span></h2>
         <button @click="addCharacter">+ character</button>
       </div>
       <table v-if="preset.characters.length">
-        <tr><th>name</th><th>category</th><th>alignment</th><th>origin</th><th>status</th><th></th></tr>
+        <tr><th>name</th><th>category</th><th>alignment</th><th>status</th><th></th></tr>
         <template v-for="(c,i) in preset.characters" :key="i">
           <tr>
-            <td><input v-model="c.name" style="width:140px"></td>
+            <td><input v-model="c.name" style="width:160px"></td>
             <td><select v-model="c.category"><option value=""></option><option v-for="k in preset.categories">{{ k }}</option></select></td>
             <td><select v-model="c.alignment"><option value=""></option><option v-for="k in preset.alignments">{{ k }}</option></select></td>
-            <td><input v-model="c.themeOrigin" style="width:110px"></td>
-            <td><input v-model="c.status" style="width:80px"></td>
+            <td>
+              <select v-model="c.status" :class="{dim: !isDealable(c)}">
+                <option value="active">active</option>
+                <option value="unused">unused</option>
+              </select>
+            </td>
             <td style="white-space:nowrap">
               <button class="mini ghost" @click="ui.charOpen = ui.charOpen===i ? null : i">{{ ui.charOpen===i ? '▾' : '✎' }}</button>
               <button class="mini danger" @click="preset.characters.splice(i,1)">✕</button>
             </td>
           </tr>
           <tr v-if="ui.charOpen===i">
-            <td colspan="6" style="background:var(--panel2)">
+            <td colspan="5" style="background:var(--panel2)">
+              <label>theme / origin</label>
+              <input v-model="c.themeOrigin" style="width:220px;display:block">
               <label>pre-merge ability</label>
               <textarea v-model="c.preMerge" rows="2"></textarea>
               <label>post-merge ability</label>
@@ -264,7 +270,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       <div class="row">
         <label>preset</label>
         <select v-model.number="ui.setupPresetIdx">
-          <option v-for="(p,i) in presets" :value="i">{{ p.meta.name }} ({{ p.characters.length }} characters)</option>
+          <option v-for="(p,i) in presets" :value="i">{{ p.meta.name }} ({{ dealableCount(p) }} in deal)</option>
         </select>
       </div>
       <h3>Players <span class="dim">one per line or comma-separated</span></h3>
@@ -875,6 +881,9 @@ const app = createApp({
 
   methods: {
     actionLabel,
+    /* blank/legacy statuses count as active; only explicit unused/removed/cut are excluded from the deal */
+    isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
+    dealableCount(p) { return p.characters.filter(c => c.name && this.isDealable(c)).length; },
     moveIn(arr, i, dir) { const j = i + dir; [arr[i], arr[j]] = [arr[j], arr[i]]; },
     pushTrim(arr, uiKey) {
       const v = this.ui[uiKey].trim();
@@ -900,7 +909,7 @@ const app = createApp({
     },
     addCharacter() {
       this.preset.characters.push({ name: "", category: "", alignment: "",
-        themeOrigin: "", preMerge: "", postMerge: "", status: "", comments: "" });
+        themeOrigin: "", preMerge: "", postMerge: "", status: "active", comments: "" });
       this.ui.charOpen = this.preset.characters.length - 1;
     },
 
@@ -933,6 +942,7 @@ const app = createApp({
         const c = { name: "", category: "", alignment: "", themeOrigin: "",
           preMerge: "", postMerge: "", status: "", comments: "" };
         map.forEach((f, ci) => { if (f !== "(skip)") c[f] = r[ci]; });
+        c.status = this.isDealable(c) ? "active" : "unused";
         return c;
       }).filter(c => c.name);
       if (this.ui.tsvMode === "replace") this.preset.characters = chars;
@@ -950,7 +960,7 @@ const app = createApp({
       const dupes = names.filter((n, i) => names.indexOf(n) !== i);
       if (dupes.length) { this.ui.setupErr = "Duplicate names: " + [...new Set(dupes)].join(", "); return; }
       /* unused/cut characters stay in the preset for reference but are never dealt; manual swap-in still allowed */
-      const chars = this.setupPreset.characters.filter(c => c.name && !/unused|removed|cut/i.test(c.status || ""));
+      const chars = this.setupPreset.characters.filter(c => c.name && this.isDealable(c));
       if (!names.length) { this.ui.setupErr = "No player names."; return; }
       if (names.length > chars.length) {
         this.ui.setupErr = `${names.length} players but only ${chars.length} characters in the preset.`;
@@ -1478,6 +1488,7 @@ const app = createApp({
       try { doc = JSON.parse(this.ui.importText); }
       catch (e) { this.ui.importErr = true; this.ui.importMsg = "Not valid JSON."; return; }
       if (doc && doc.meta && Array.isArray(doc.characters)) {
+        doc.characters.forEach(c => c.status = this.isDealable(c) ? "active" : "unused");
         this.presets.push(doc);
         this.ui.importMsg = `Preset "${doc.meta.name}" imported.`;
       } else if (doc && Array.isArray(doc.players) && Array.isArray(doc.phases)) {
@@ -1503,6 +1514,11 @@ const app = createApp({
 
   mounted() {
     window.$vm = this;            // console access for debugging
+    /* migrate free-text statuses from older saves to the dropdown values */
+    this.presets.forEach(p => p.characters.forEach(c => {
+      if (c.status !== "active" && c.status !== "unused")
+        c.status = this.isDealable(c) ? "active" : "unused";
+    }));
     if (this.game) this.route = "game";
   },
 });
