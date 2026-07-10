@@ -449,7 +449,63 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <button v-if="!ui.ev" @click="evNew">+ event</button>
           </div>
 
-          <!-- RESOLVE (step 6) -->
+          <!-- RESOLVE -->
+          <div class="row" style="margin-top:14px" v-if="!activePhase.committed">
+            <button class="primary" @click="proposeResolve">Mark resolved…</button>
+          </div>
+          <div class="row" style="margin-top:14px" v-else>
+            <button v-if="isLatestCommitted(activePhase)" class="danger" @click="unresolve">Un-resolve {{ activePhase.name }}</button>
+            <span v-else class="dim small">older phase — un-resolve the latest committed phase first</span>
+          </div>
+
+          <template v-if="activePhase.committed && activePhase.report">
+            <h3>Discord output</h3>
+            <pre class="paste">{{ phaseText(activePhase) }}</pre>
+            <button class="mini" @click="copyText(phaseText(activePhase))">Copy</button>
+          </template>
+        </div>
+
+        <!-- proposal review -->
+        <div v-if="ui.proposal" class="overlay" @click.self="ui.proposal=null">
+          <div class="modal" style="width:640px">
+            <h2>Proposed outcome — {{ activePhase.name }}</h2>
+            <p class="dim small">Advisory. Review, then commit; player state only changes on commit.</p>
+            <template v-if="ui.proposal.deaths.length">
+              <h3>Deaths</h3>
+              <div v-for="d in ui.proposal.deaths">☠️ <b>{{ d.player }}</b> — {{ d.penetrating ? 'penetrating ' : '' }}KP from {{ d.by }}<span v-if="d.guarding" class="dim"> (took the hit for {{ d.guarding }})</span></div>
+            </template>
+            <template v-if="ui.proposal.saved.length">
+              <h3>Survived</h3>
+              <div v-for="s in ui.proposal.saved">🛡 {{ s.player }} — {{ s.how }} <span class="dim">vs {{ s.vs }}</span></div>
+            </template>
+            <template v-if="ui.proposal.checks.length">
+              <h3>Checks</h3>
+              <div v-for="c in ui.proposal.checks">🔍 {{ c.actor }} reads <b>{{ c.target }}</b>: {{ c.shown }}
+                <span class="badge warn" v-if="c.disguised">disguised — truth: {{ c.truth }}</span>
+                <span class="badge bad" v-if="c.actorDied">actor died this phase</span>
+              </div>
+            </template>
+            <template v-if="ui.proposal.grants.length || ui.proposal.marks.length || ui.proposal.invulns.length || ui.proposal.protUses.length || ui.proposal.gunUses.length">
+              <h3>Inventory / flags</h3>
+              <div v-for="x in ui.proposal.grants">➕ {{ x.target }} gets {{ x.item }}</div>
+              <div v-for="x in ui.proposal.marks">🎯 {{ x.target }} flagged {{ x.flag }}{{ x.duration ? ' ('+x.duration+'ph)' : '' }}</div>
+              <div v-for="x in ui.proposal.invulns">🛡️ {{ x.target }} invulnerable {{ x.duration }}ph</div>
+              <div v-for="x in ui.proposal.protUses">− {{ x.player }} {{ x.fromInventory ? 'consumes '+x.type : 'used external save' }}</div>
+              <div v-for="x in ui.proposal.gunUses">− {{ x }} consumes gun</div>
+            </template>
+            <template v-if="ui.proposal.skipped.length">
+              <h3>Skipped</h3>
+              <div v-for="s in ui.proposal.skipped" class="dim">{{ s }}</div>
+            </template>
+            <template v-if="ui.proposal.logs.length">
+              <h3>Log-only</h3>
+              <div v-for="l in ui.proposal.logs" class="dim">{{ l.text }}</div>
+            </template>
+            <div class="row" style="margin-top:14px">
+              <button class="primary" @click="commitPhase">Commit</button>
+              <button class="ghost" @click="ui.proposal=null">Cancel</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -703,7 +759,7 @@ const app = createApp({
         presetIdx: 0, charOpen: null, catNew: "", alignNew: "",
         tsvText: "", tsv: null, tsvErr: "", tsvMode: "append",
         setupPresetIdx: 0, namesText: "", setupErr: "", assign: null,
-        modalP: null, tab: null, ev: null, evErr: "",
+        modalP: null, tab: null, ev: null, evErr: "", proposal: null,
         itemSel: "gun", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "marked", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "",
@@ -972,6 +1028,235 @@ const app = createApp({
       const i = this.game.events.findIndex(x => x.id === e.id);
       this.apply("event removed: " + this.evLine(e), () => this.game.events.splice(i, 1));
     },
+
+    /* ----- resolver (advisory) ----- */
+    byName(name) { return this.game.players.find(p => p.name === name); },
+
+    resolvePhase(ph) {
+      const g = this.game;
+      const order = g.preset.priority;
+      const pos = e => {
+        if (e.action.startsWith("c:")) return 99;              // custom: log-only, last
+        const i = order.indexOf(e.action);
+        return i === -1 ? 99 : i;
+      };
+      const evs = g.events.filter(e => e.status === "pending" && this.landsOnId(e) === ph.id);
+      const sorted = evs.map((e, i) => ({ e, i }))
+        .sort((a, b) => (pos(a.e) - pos(b.e)) || (a.i - b.i)).map(x => x.e);
+
+      /* working state */
+      const W = {};
+      g.players.forEach(p => W[p.name] = {
+        blocked: false, forcedTarget: null, deflectTo: null, stripped: false,
+        invuln: p.flags.some(f => f.key === "invuln"),
+        guards: [],
+        protections: p.inventory.filter(it => it.key === "vest" || it.key === "save")
+          .map(it => ({ type: it.key, fromInventory: true })),
+        kp: [],
+      });
+
+      const prop = { phase: ph.name, deaths: [], saved: [], checks: [], grants: [], marks: [],
+        invulns: [], protUses: [], gunUses: [], logs: [], skipped: [], events: sorted.map(e => e.id) };
+      const dead = new Set(g.players.filter(p => !p.alive).map(p => p.name));
+      const diedNow = new Set();
+      const blockPos = order.indexOf("roleblock");
+      const killPos = order.indexOf("kill");
+      let killsDone = false;
+
+      const effTarget = e => {
+        let t = (W[e.actor] && W[e.actor].forcedTarget) || e.target;
+        if (t && W[t] && W[t].deflectTo) t = W[t].deflectTo;   // applied once, no chaining
+        return t;
+      };
+
+      const resolveKills = () => {
+        killsDone = true;
+        for (const p of g.players) {
+          const w = W[p.name];
+          for (const hit of w.kp) {
+            let victim = p.name, vw = w, via = null;
+            const guard = w.guards.find(gn => !diedNow.has(gn) && !dead.has(gn));
+            if (!(w.invuln && !w.stripped) && guard) { victim = guard; vw = W[guard]; via = p.name; }
+            if (vw.invuln && !vw.stripped) {
+              prop.saved.push({ player: victim, how: "invulnerable", vs: hit.source });
+            } else if (hit.penetrating) {
+              diedNow.add(victim);
+              prop.deaths.push({ player: victim, by: hit.source, penetrating: true, guarding: via });
+            } else if (vw.protections.length) {
+              const pr = vw.protections.shift();
+              prop.protUses.push({ player: victim, type: pr.type, fromInventory: !!pr.fromInventory });
+              prop.saved.push({ player: victim, how: pr.type, vs: hit.source });
+            } else {
+              diedNow.add(victim);
+              prop.deaths.push({ player: victim, by: hit.source, guarding: via });
+            }
+          }
+        }
+      };
+
+      for (const e of sorted) {
+        const p = pos(e);
+        if (!killsDone && p > killPos) resolveKills();
+        if (p === 99) {
+          prop.logs.push({ actor: e.actor, text: this.evLine(e) + (e.note ? " — " + e.note : "") });
+          continue;
+        }
+        const wA = W[e.actor];
+        if (wA && wA.blocked && p > blockPos) { prop.skipped.push(this.evLine(e) + " — roleblocked"); continue; }
+        const t = effTarget(e);
+        const wT = W[t];
+        if (!wT) { prop.skipped.push(this.evLine(e) + " — no valid target"); continue; }
+        switch (e.action) {
+          case "roleblock":
+            wT.blocked = true;
+            prop.marks.push({ target: t, flag: "roleblocked", duration: 1 });
+            break;
+          case "redirect":
+            if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
+            break;
+          case "strip":
+            wT.stripped = true; wT.invuln = false; wT.protections = [];
+            prop.marks.push({ target: t, flag: "stripped", duration: 1 });
+            break;
+          case "invuln":
+            if (!wT.stripped) { wT.invuln = true; prop.invulns.push({ target: t, duration: e.opts.duration || 1 }); }
+            else prop.skipped.push(this.evLine(e) + " — target stripped");
+            break;
+          case "bodyguard":
+            wT.guards.push(e.actor);
+            break;
+          case "save":
+            if (!wT.stripped) wT.protections.push({ type: "save", fromInventory: false });
+            else prop.skipped.push(this.evLine(e) + " — target stripped");
+            break;
+          case "kill":
+            wT.kp.push({ source: e.actor, penetrating: !!e.opts.penetrating });
+            if (e.opts.useGun) prop.gunUses.push(e.actor);
+            break;
+          case "investigate": {
+            const pl = this.byName(t);
+            const read = e.opts.read || "alignment";
+            const truth = pl ? pl[read] : "?";
+            let shown = truth;
+            const disg = pl && pl.flags.find(f => f.key === "disguised" && f.param && f.param.value);
+            if (disg) {
+              if (disg.param.as === read) shown = disg.param.value;
+              else if (disg.param.as === "character") {
+                const cd = g.preset.characters.find(c => c.name === disg.param.value);
+                if (cd && cd[read]) shown = cd[read];
+              }
+            }
+            prop.checks.push({ actor: e.actor, target: t, read, truth, shown,
+              disguised: shown !== truth, actorDied: diedNow.has(e.actor) });
+            break;
+          }
+          case "grant":
+            prop.grants.push({ target: t, item: e.opts.item });
+            break;
+          case "mark":
+            prop.marks.push({ target: t, flag: e.opts.flag, duration: e.opts.flagDur });
+            break;
+        }
+      }
+      if (!killsDone) resolveKills();
+      return prop;
+    },
+
+    proposeResolve() { this.ui.proposal = this.resolvePhase(this.activePhase); },
+
+    flagInstFromMark(mk) {
+      let d;
+      if (mk.flag.startsWith("preset:")) {
+        const c = this.game.preset.customFlags.find(x => x.name === mk.flag.slice(7));
+        d = { key: "custom", icon: c.icon, name: c.name, description: c.description, custom: true };
+      } else {
+        const s = STD_FLAGS.find(x => x.key === mk.flag);
+        d = { key: s.key, icon: s.icon, name: s.name, description: s.description, custom: false };
+      }
+      if (d.key === "stacks") d.count = 1;
+      return { ...d, duration: mk.duration == null ? null : mk.duration };
+    },
+
+    commitPhase() {
+      const ph = this.activePhase, prop = this.ui.proposal, g = this.game;
+      this.apply("phase committed: " + ph.name, () => {
+        ph.snapshot = clone(g.players);
+        /* expire old durations first, so newly applied flags live their full term */
+        g.players.forEach(pl => {
+          pl.flags = pl.flags.filter(f => {
+            if (f.duration == null) return true;
+            f.duration -= 1;
+            return f.duration > 0;
+          });
+        });
+        prop.deaths.forEach(d => {
+          const pl = this.byName(d.player);
+          if (!pl) return;
+          pl.alive = false; pl.deathPhase = ph.name;
+          pl.deathCause = (d.penetrating ? "penetrating " : "") + "KP from " + d.by
+            + (d.guarding ? " (guarding " + d.guarding + ")" : "");
+        });
+        prop.protUses.filter(u => u.fromInventory).forEach(u => {
+          const pl = this.byName(u.player);
+          const i = pl ? pl.inventory.findIndex(it => it.key === u.type) : -1;
+          if (i !== -1) pl.inventory.splice(i, 1);
+        });
+        prop.gunUses.forEach(name => {
+          const pl = this.byName(name);
+          const i = pl ? pl.inventory.findIndex(it => it.key === "gun") : -1;
+          if (i !== -1) pl.inventory.splice(i, 1);
+        });
+        prop.grants.forEach(gr => {
+          const pl = this.byName(gr.target);
+          const d = STD_ITEMS.find(x => x.key === gr.item);
+          if (pl && d) pl.inventory.push({ key: d.key, icon: d.icon, name: d.name, description: d.description, custom: false });
+        });
+        prop.marks.forEach(mk => {
+          const pl = this.byName(mk.target);
+          if (pl) pl.flags.push(this.flagInstFromMark(mk));
+        });
+        prop.invulns.forEach(iv => {
+          const pl = this.byName(iv.target);
+          const s = STD_FLAGS.find(x => x.key === "invuln");
+          if (pl) pl.flags.push({ key: s.key, icon: s.icon, name: s.name, description: s.description, custom: false, duration: iv.duration });
+        });
+        g.events.forEach(e => { if (prop.events.includes(e.id)) e.status = "resolved"; });
+        ph.report = prop;
+        ph.committed = true;
+      });
+      this.ui.proposal = null;
+    },
+
+    isLatestCommitted(ph) {
+      const committed = this.game.phases.filter(p => p.committed);
+      return committed.length && committed[committed.length - 1].id === ph.id;
+    },
+    unresolve() {
+      const ph = this.activePhase, g = this.game;
+      if (!this.isLatestCommitted(ph)) return;
+      this.apply("phase un-resolved: " + ph.name, () => {
+        g.players.splice(0, g.players.length, ...clone(ph.snapshot));
+        g.events.forEach(e => { if (e.status === "resolved" && this.landsOnId(e) === ph.id) e.status = "pending"; });
+        ph.committed = false; ph.snapshot = null; ph.report = null;
+      });
+    },
+
+    /* ----- discord output ----- */
+    phaseText(ph) {
+      const r = ph.report;
+      const out = [`=== ${ph.name} ===`];
+      const fallen = [...new Set(r.deaths.map(d => d.player))];
+      if (fallen.length) fallen.forEach(name => {
+        const pl = this.byName(name);
+        out.push(`||${name}${pl ? " (" + pl.character + ")" : ""} died||`);
+      });
+      else out.push("||no one died||");
+      r.saved.forEach(s => out.push(`||${s.player} was attacked and survived||`));
+      r.checks.forEach(c => out.push(`check: ||${c.actor} → ${c.target}: ${c.shown}||`));
+      r.logs.forEach(l => out.push(`||${l.text}||`));
+      return out.join("\n");
+    },
+    async copyText(t) { await navigator.clipboard.writeText(t); },
 
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
     apply(op, fn) {
