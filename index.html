@@ -91,6 +91,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .badge{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--dim);white-space:nowrap}
 .badge.warn{color:var(--third);border-color:var(--third)}
 .badge.bad{color:var(--bad);border-color:var(--bad)}
+.badge.manual{color:#fff;background:var(--bad);border-color:var(--bad);font-weight:700;letter-spacing:.04em}
 .landing{border:1px solid var(--acc2);border-radius:8px;padding:8px 10px;margin-bottom:12px;background:#171a2c}
 .landing h3{margin:0 0 6px;color:var(--acc2)}
 .committed-note{color:var(--good);font-size:12px}
@@ -342,6 +343,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <option value="char">character A–Z</option>
                 <option value="alive">alive first</option>
               </select>
+              <button class="mini" @click="view.leafDir = view.leafDir === 'desc' ? 'asc' : 'desc'"
+                :title="view.leafDir === 'desc' ? 'descending' : 'ascending'">{{ view.leafDir === 'desc' ? '▼' : '▲' }}</button>
             </div>
             <div class="dim small" v-if="view.chain.length" style="margin-bottom:6px">{{ breadcrumb }}</div>
           </div>
@@ -400,6 +403,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <span class="opts">{{ optsSummary(e) }}</span>
                 <span class="note" v-if="e.note">{{ e.note }}</span>
               </span>
+              <span class="badge manual" v-if="e.action.startsWith('c:')">manual</span>
               <span class="badge">declared {{ phaseName(e.declaredPhase) }}</span>
               <span class="badge bad" v-if="!isAlive(e.actor)">actor is dead</span>
               <button class="mini danger" v-if="!activePhase.committed" @click="evDelete(e)" title="cancel">✕</button>
@@ -413,6 +417,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <span class="opts">{{ optsSummary(e) }}</span>
               <span class="note" v-if="e.note">{{ e.note }}</span>
             </span>
+            <span class="badge manual" v-if="e.action.startsWith('c:')">manual</span>
             <span class="badge" v-if="e.timeframe!=='immediate'">{{ timeframeLabel(e) }}</span>
             <span class="badge warn" v-if="e.status==='cancelled'">cancelled</span>
             <template v-if="!activePhase.committed">
@@ -544,8 +549,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <div v-for="s in ui.proposal.skipped" class="dim">{{ s }}</div>
             </template>
             <template v-if="ui.proposal.logs.length">
-              <h3>Log-only</h3>
-              <div v-for="l in ui.proposal.logs" class="dim">{{ l.text }}</div>
+              <h3>Not automated — apply by hand before committing</h3>
+              <div v-for="l in ui.proposal.logs"><span class="badge manual">manual</span> {{ l.text }}</div>
             </template>
             <div class="row" style="margin-top:14px">
               <button class="primary" @click="commitPhase">Commit</button>
@@ -584,6 +589,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <h3>Inventory</h3>
         <div>
           <span v-for="(it,i) in mp.inventory" class="chip" :title="it.description">{{ it.icon }} {{ it.name }}
+            <span class="badge manual" v-if="it.custom">manual</span>
             <span class="x" @click="apply('item removed: '+it.name+' from '+mp.name, () => mp.inventory.splice(i,1))">✕</span></span>
         </div>
         <div v-if="!mp.inventory.length" class="dim small">nothing held</div>
@@ -606,6 +612,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <div>
           <span v-for="(f,i) in mp.flags" class="chip" :title="f.description">{{ f.icon }} {{ f.name }}<span
               class="dim">{{ flagSuffix(f) }}</span>
+            <span class="badge manual" v-if="f.custom">manual</span>
             <template v-if="f.key==='stacks'">
               <button class="mini ghost" @click="f.count=Math.max(0,(f.count||0)-1)">−</button>
               <button class="mini ghost" @click="f.count=(f.count||0)+1">+</button>
@@ -1213,12 +1220,13 @@ const app = createApp({
         const i = this.game.preset.alignments.indexOf(p.alignment);
         return i === -1 ? 99 : i;
       };
-      return [...list].sort((a, b) => {
+      const out = [...list].sort((a, b) => {
         if (s === "align") return alignRank(a) - alignRank(b) || a.order - b.order;
         if (s === "char") return a.character.localeCompare(b.character);
         if (s === "alive") return (b.alive - a.alive) || (a.order - b.order);
         return a.order - b.order;
       });
+      return this.view.leafDir === "desc" ? out.reverse() : out;
     },
     partition(players, cond) {
       const kind = cond.slice(0, cond.indexOf(":"));
