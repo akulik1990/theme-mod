@@ -252,6 +252,11 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 
     <div class="card">
       <h2>Action priority <span class="dim small">resolution order, top first</span></h2>
+      <div class="row" style="margin-bottom:4px">
+        <span class="dim small" style="width:20px;text-align:right">0</span>
+        <span style="width:220px">Redirect + Roleblock</span>
+        <span class="dim small">simultaneous control step, always first</span>
+      </div>
       <div class="row" v-for="(k,i) in preset.priority" style="margin-bottom:4px">
         <span class="dim small" style="width:20px;text-align:right">{{ i+1 }}</span>
         <span style="width:220px">{{ actionLabel(k) }}</span>
@@ -470,17 +475,6 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <label>item</label>
                 <select v-model="ui.ev.opts.item">
                   <option v-for="it in STD_ITEMS" :value="it.key">{{ it.icon }} {{ it.name }}</option>
-                </select>
-              </template>
-              <template v-if="ui.ev.action==='mark'">
-                <label>flag</label>
-                <select v-model="ui.ev.opts.flag">
-                  <option v-for="f in STD_FLAGS" :value="f.key">{{ f.icon }} {{ f.name }}</option>
-                  <option v-for="f in game.preset.customFlags" :value="'preset:'+f.name">{{ f.icon }} {{ f.name }}</option>
-                </select>
-                <select v-model="ui.ev.opts.flagDur">
-                  <option :value="null">permanent</option>
-                  <option v-for="n in [1,2,3,4,5]" :value="n">{{ n }}ph</option>
                 </select>
               </template>
               <label>lands</label>
@@ -709,9 +703,11 @@ const STD_ACTIONS = [
   { key:"kill",        label:"Deliver KP" },        // opts: penetrating, useGun
   { key:"investigate", label:"Investigate" },       // opts: read "alignment"|"category"
   { key:"grant",       label:"Grant item" },        // opts: item key
-  { key:"mark",        label:"Mark / flag" },       // opts: flag key, duration
 ];
-const DEFAULT_PRIORITY = STD_ACTIONS.map(a => a.key);
+/* roleblock + redirect are a simultaneous control step, always first — not orderable.
+   Redirect maps apply before block targeting; a blocked redirector's redirect still stands. */
+const CONTROL_ACTIONS = ["roleblock", "redirect"];
+const DEFAULT_PRIORITY = STD_ACTIONS.map(a => a.key).filter(k => !CONTROL_ACTIONS.includes(k));
 const actionLabel = k => (STD_ACTIONS.find(a => a.key === k) || { label:k }).label;
 
 const STD_ITEMS = [
@@ -883,6 +879,10 @@ const app = createApp({
     actionLabel,
     /* blank/legacy statuses count as active; only explicit unused/removed/cut are excluded from the deal */
     isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
+    migratePriority(p) {
+      p.priority = (p.priority || []).filter(k => DEFAULT_PRIORITY.includes(k));
+      DEFAULT_PRIORITY.forEach(k => { if (!p.priority.includes(k)) p.priority.push(k); });
+    },
     dealableCount(p) { return p.characters.filter(c => c.name && this.isDealable(c)).length; },
     moveIn(arr, i, dir) { const j = i + dir; [arr[i], arr[j]] = [arr[j], arr[i]]; },
     pushTrim(arr, uiKey) {
@@ -1099,7 +1099,6 @@ const app = createApp({
       if (e.action === "kill") { if (o.penetrating) out.push("penetrating"); if (o.useGun) out.push("gun"); }
       if (e.action === "investigate") out.push(o.read);
       if (e.action === "grant") out.push(o.item);
-      if (e.action === "mark") out.push(o.flag + (o.flagDur ? ` ${o.flagDur}ph` : ""));
       return out.join(", ");
     },
     timeframeLabel(e) {
@@ -1111,7 +1110,7 @@ const app = createApp({
       this.ui.evErr = "";
       this.ui.ev = { id: null, actor: "", action: "kill", target: "", timeframe: "immediate", note: "",
         opts: { mode: "by", to: "", duration: 1, penetrating: false, useGun: false,
-                read: "alignment", item: "gun", flag: "marked", flagDur: null } };
+                read: "alignment", item: "gun" } };
     },
     evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
     /* picking "new custom action…" registers it on the game doc so every mod's picker gets it */
@@ -1195,6 +1194,7 @@ const app = createApp({
       const order = g.preset.priority;
       const pos = e => {
         if (e.action.startsWith("c:")) return 99;              // custom: log-only, last
+        if (CONTROL_ACTIONS.includes(e.action)) return -1;     // control step: always first
         const i = order.indexOf(e.action);
         return i === -1 ? 99 : i;
       };
@@ -1217,9 +1217,17 @@ const app = createApp({
         invulns: [], protUses: [], gunUses: [], logs: [], skipped: [], events: sorted.map(e => e.id) };
       const dead = new Set(g.players.filter(p => !p.alive).map(p => p.name));
       const diedNow = new Set();
-      const blockPos = order.indexOf("roleblock");
       const killPos = order.indexOf("kill");
       let killsDone = false;
+
+      /* control pre-pass: redirect maps apply before any block targeting, and a
+         same-step block never cancels a redirect (simultaneity) */
+      for (const e of sorted) {
+        if (e.action !== "redirect") continue;
+        const wT = W[e.target];
+        if (!wT) continue;
+        if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
+      }
 
       const effTarget = e => {
         let t = (W[e.actor] && W[e.actor].forcedTarget) || e.target;
@@ -1254,13 +1262,15 @@ const app = createApp({
 
       for (const e of sorted) {
         const p = pos(e);
+        if (e.action === "redirect") continue;                 // applied in the control pre-pass
         if (!killsDone && p > killPos) resolveKills();
         if (p === 99) {
           prop.logs.push({ actor: e.actor, text: this.evLine(e) + (e.note ? " — " + e.note : "") });
           continue;
         }
         const wA = W[e.actor];
-        if (wA && wA.blocked && p > blockPos) { prop.skipped.push(this.evLine(e) + " — roleblocked"); continue; }
+        /* blocked actors lose everything after the control step; same-step blocks stay simultaneous */
+        if (wA && wA.blocked && p > -1) { prop.skipped.push(this.evLine(e) + " — roleblocked"); continue; }
         const t = effTarget(e);
         const wT = W[t];
         if (!wT) { prop.skipped.push(this.evLine(e) + " — no valid target"); continue; }
@@ -1268,9 +1278,6 @@ const app = createApp({
           case "roleblock":
             wT.blocked = true;
             prop.marks.push({ target: t, flag: "roleblocked", duration: 1 });
-            break;
-          case "redirect":
-            if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
             break;
           case "strip":
             wT.stripped = true; wT.invuln = false; wT.protections = [];
@@ -1310,9 +1317,6 @@ const app = createApp({
           }
           case "grant":
             prop.grants.push({ target: t, item: e.opts.item });
-            break;
-          case "mark":
-            prop.marks.push({ target: t, flag: e.opts.flag, duration: e.opts.flagDur });
             break;
         }
       }
@@ -1489,6 +1493,7 @@ const app = createApp({
       catch (e) { this.ui.importErr = true; this.ui.importMsg = "Not valid JSON."; return; }
       if (doc && doc.meta && Array.isArray(doc.characters)) {
         doc.characters.forEach(c => c.status = this.isDealable(c) ? "active" : "unused");
+        this.migratePriority(doc);
         this.presets.push(doc);
         this.ui.importMsg = `Preset "${doc.meta.name}" imported.`;
       } else if (doc && Array.isArray(doc.players) && Array.isArray(doc.phases)) {
@@ -1519,6 +1524,8 @@ const app = createApp({
       if (c.status !== "active" && c.status !== "unused")
         c.status = this.isDealable(c) ? "active" : "unused";
     }));
+    /* migrate priority lists: control actions and mark are no longer orderable */
+    this.presets.forEach(p => this.migratePriority(p));
     if (this.game) this.route = "game";
   },
 });
