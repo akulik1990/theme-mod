@@ -949,7 +949,8 @@ const app = createApp({
       const names = this.setupNames;
       const dupes = names.filter((n, i) => names.indexOf(n) !== i);
       if (dupes.length) { this.ui.setupErr = "Duplicate names: " + [...new Set(dupes)].join(", "); return; }
-      const chars = this.setupPreset.characters.filter(c => c.name);
+      /* unused/cut characters stay in the preset for reference but are never dealt; manual swap-in still allowed */
+      const chars = this.setupPreset.characters.filter(c => c.name && !/unused|removed|cut/i.test(c.status || ""));
       if (!names.length) { this.ui.setupErr = "No player names."; return; }
       if (names.length > chars.length) {
         this.ui.setupErr = `${names.length} players but only ${chars.length} characters in the preset.`;
