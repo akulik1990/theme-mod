@@ -81,6 +81,20 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .modal h2{margin:0 0 12px;color:var(--acc);font-size:16px}
 .fgrid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8px;align-items:center}
 .fgrid label{text-align:right}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
+.tabs button.done{color:var(--good)}
+.evrow{display:flex;gap:8px;align-items:baseline;padding:4px 6px;border-radius:6px}
+.evrow:hover{background:var(--panel2)}
+.evrow .desc{flex:1}
+.evrow .desc .opts{color:var(--acc);font-size:12px;margin-left:6px}
+.evrow .desc .note{color:var(--dim);font-size:12px;margin-left:6px;font-style:italic}
+.badge{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--dim);white-space:nowrap}
+.badge.warn{color:var(--third);border-color:var(--third)}
+.badge.bad{color:var(--bad);border-color:var(--bad)}
+.landing{border:1px solid var(--acc2);border-radius:8px;padding:8px 10px;margin-bottom:12px;background:#171a2c}
+.landing h3{margin:0 0 6px;color:var(--acc2)}
+.committed-note{color:var(--good);font-size:12px}
+.evform{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px}
 </style>
 </head>
 <body>
@@ -309,8 +323,134 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </div>
 
       <div class="phasecol">
-        <!-- PHASES (step 5) -->
-        <div class="card"><p class="dim">Phase log lands in step 5.</p></div>
+        <!-- PHASES -->
+        <div class="tabs">
+          <button v-for="(ph,i) in game.phases" :class="{on:i===tabIdx, done:ph.committed}"
+            @click="ui.tab=i">{{ ph.name }}{{ ph.committed ? ' ✓' : '' }}</button>
+          <button class="ghost" @click="addPhase('night')">+ night</button>
+          <button class="ghost" @click="addPhase('day')">+ day</button>
+        </div>
+
+        <div class="card" v-if="activePhase">
+          <div class="spread">
+            <h2>{{ activePhase.name }} <span class="dim small">{{ activePhase.type }}</span></h2>
+            <span class="committed-note" v-if="activePhase.committed">committed — read-only</span>
+          </div>
+
+          <div class="landing" v-if="eventsLanding(activePhase).length">
+            <h3>Landing this phase</h3>
+            <div v-for="e in eventsLanding(activePhase)" class="evrow">
+              <span class="desc">{{ evLine(e) }}
+                <span class="opts">{{ optsSummary(e) }}</span>
+                <span class="note" v-if="e.note">{{ e.note }}</span>
+              </span>
+              <span class="badge">declared {{ phaseName(e.declaredPhase) }}</span>
+              <span class="badge bad" v-if="!isAlive(e.actor)">actor is dead</span>
+              <button class="mini danger" v-if="!activePhase.committed" @click="evDelete(e)" title="cancel">✕</button>
+            </div>
+          </div>
+
+          <h3>Events declared this phase</h3>
+          <div v-if="!eventsDeclared(activePhase).length" class="dim small">none yet</div>
+          <div v-for="e in eventsDeclared(activePhase)" class="evrow">
+            <span class="desc">{{ evLine(e) }}
+              <span class="opts">{{ optsSummary(e) }}</span>
+              <span class="note" v-if="e.note">{{ e.note }}</span>
+            </span>
+            <span class="badge" v-if="e.timeframe!=='immediate'">{{ timeframeLabel(e) }}</span>
+            <span class="badge warn" v-if="e.status==='cancelled'">cancelled</span>
+            <template v-if="!activePhase.committed">
+              <button class="mini ghost" @click="evEdit(e)">✎</button>
+              <button class="mini danger" @click="evDelete(e)">✕</button>
+            </template>
+          </div>
+
+          <div class="evform" v-if="ui.ev && !activePhase.committed">
+            <div class="row">
+              <label>actor</label>
+              <select v-model="ui.ev.actor">
+                <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}{{ p.alive ? '' : ' †' }}</option>
+              </select>
+              <label>action</label>
+              <select v-model="ui.ev.action">
+                <optgroup label="standard">
+                  <option v-for="a in STD_ACTIONS" :value="a.key">{{ a.label }}</option>
+                </optgroup>
+                <optgroup label="custom (log-only)" v-if="game.preset.customActions.length">
+                  <option v-for="a in game.preset.customActions" :value="'c:'+a.name">{{ a.name }}</option>
+                </optgroup>
+              </select>
+              <label>target</label>
+              <select v-model="ui.ev.target">
+                <option value="">—</option>
+                <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}{{ p.alive ? '' : ' †' }}</option>
+              </select>
+            </div>
+            <div class="row" style="margin-top:6px">
+              <template v-if="ui.ev.action==='redirect'">
+                <select v-model="ui.ev.opts.mode">
+                  <option value="by">actions BY target go to…</option>
+                  <option value="at">actions AIMED AT target go to…</option>
+                </select>
+                <select v-model="ui.ev.opts.to">
+                  <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}</option>
+                </select>
+              </template>
+              <template v-if="ui.ev.action==='invuln'">
+                <label>duration</label>
+                <select v-model="ui.ev.opts.duration">
+                  <option v-for="n in [1,2,3]" :value="n">{{ n }} phase{{ n>1?'s':'' }}</option>
+                </select>
+              </template>
+              <template v-if="ui.ev.action==='kill'">
+                <label><input type="checkbox" v-model="ui.ev.opts.penetrating"> penetrating</label>
+                <label v-if="actorHasGun"><input type="checkbox" v-model="ui.ev.opts.useGun"> source: gun (consumed)</label>
+              </template>
+              <template v-if="ui.ev.action==='investigate'">
+                <label>read</label>
+                <select v-model="ui.ev.opts.read">
+                  <option value="alignment">alignment</option>
+                  <option value="category">category</option>
+                </select>
+              </template>
+              <template v-if="ui.ev.action==='grant'">
+                <label>item</label>
+                <select v-model="ui.ev.opts.item">
+                  <option v-for="it in STD_ITEMS" :value="it.key">{{ it.icon }} {{ it.name }}</option>
+                </select>
+              </template>
+              <template v-if="ui.ev.action==='mark'">
+                <label>flag</label>
+                <select v-model="ui.ev.opts.flag">
+                  <option v-for="f in STD_FLAGS" :value="f.key">{{ f.icon }} {{ f.name }}</option>
+                  <option v-for="f in game.preset.customFlags" :value="'preset:'+f.name">{{ f.icon }} {{ f.name }}</option>
+                </select>
+                <select v-model="ui.ev.opts.flagDur">
+                  <option :value="null">permanent</option>
+                  <option v-for="n in [1,2,3,4,5]" :value="n">{{ n }}ph</option>
+                </select>
+              </template>
+              <label>lands</label>
+              <select v-model="ui.ev.timeframe">
+                <option value="immediate">this phase</option>
+                <option value="end">end of phase</option>
+                <option value="nextDay">next day</option>
+                <option value="nextNight">next night</option>
+              </select>
+              <input v-model="ui.ev.note" placeholder="note" class="grow">
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button class="primary" @click="evSave">{{ ui.ev.id ? 'Save event' : 'Add event' }}</button>
+              <button class="ghost" @click="ui.ev=null">cancel</button>
+              <span class="msg err" v-if="ui.evErr">{{ ui.evErr }}</span>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px" v-if="!activePhase.committed">
+            <button v-if="!ui.ev" @click="evNew">+ event</button>
+          </div>
+
+          <!-- RESOLVE (step 6) -->
+        </div>
       </div>
 
     </div>
@@ -563,7 +703,7 @@ const app = createApp({
         presetIdx: 0, charOpen: null, catNew: "", alignNew: "",
         tsvText: "", tsv: null, tsvErr: "", tsvMode: "append",
         setupPresetIdx: 0, namesText: "", setupErr: "", assign: null,
-        modalP: null,
+        modalP: null, tab: null, ev: null, evErr: "",
         itemSel: "gun", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "marked", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "",
@@ -581,6 +721,15 @@ const app = createApp({
     aliveCount() { return this.game.players.filter(p => p.alive).length; },
     currentPhase() { return this.game.phases[this.game.phases.length - 1]; },
     rosterFlat() { return [...this.game.players].sort((a, b) => a.order - b.order); },
+    tabIdx() {
+      const n = this.game.phases.length;
+      return (this.ui.tab == null || this.ui.tab >= n) ? n - 1 : this.ui.tab;
+    },
+    activePhase() { return this.game.phases[this.tabIdx]; },
+    actorHasGun() {
+      const p = this.game.players.find(x => x.name === this.ui.ev.actor);
+      return p && p.inventory.some(it => it.key === "gun");
+    },
   },
 
   methods: {
@@ -750,6 +899,78 @@ const app = createApp({
       if (inst.key === "stacks") inst.count = 1;
       if (inst.key === "disguised") inst.param = { as: this.ui.disgAs, value: this.ui.disgVal.trim() };
       this.apply("flag added: " + inst.name + " to " + p.name, () => p.flags.push(inst));
+    },
+
+    /* ----- phases + events + landing engine ----- */
+    isAlive(name) {
+      const p = this.game.players.find(x => x.name === name);
+      return !p || p.alive;      // unknown names (renamed) count as alive, no false alarms
+    },
+    addPhase(type) {
+      const count = this.game.phases.filter(p => p.type === type).length;
+      const name = type === "night" ? "N" + count : "D" + (count + 1);
+      this.apply("phase added: " + name, () =>
+        this.game.phases.push({ id: uid(), name, type, committed: false, snapshot: null }));
+      this.ui.tab = this.game.phases.length - 1;
+    },
+    phaseName(id) {
+      const ph = this.game.phases.find(p => p.id === id);
+      return ph ? ph.name : "?";
+    },
+    /* landing phase resolved lazily: first phase of the wanted type after the declaring one */
+    landsOnId(e) {
+      if (e.timeframe === "immediate" || e.timeframe === "end") return e.declaredPhase;
+      const phases = this.game.phases;
+      const di = phases.findIndex(p => p.id === e.declaredPhase);
+      const want = e.timeframe === "nextDay" ? "day" : "night";
+      for (let i = di + 1; i < phases.length; i++) if (phases[i].type === want) return phases[i].id;
+      return null;
+    },
+    eventsDeclared(ph) { return this.game.events.filter(e => e.declaredPhase === ph.id); },
+    eventsLanding(ph) {
+      return this.game.events.filter(e =>
+        e.status === "pending" && e.declaredPhase !== ph.id && this.landsOnId(e) === ph.id);
+    },
+    actionName(e) { return e.action.startsWith("c:") ? e.action.slice(2) : actionLabel(e.action); },
+    evLine(e) { return `${e.actor} — ${this.actionName(e)}` + (e.target ? ` → ${e.target}` : ""); },
+    optsSummary(e) {
+      const o = e.opts || {}, out = [];
+      if (e.action === "redirect") out.push((o.mode === "at" ? "aimed-at" : "actions-by") + " → " + o.to);
+      if (e.action === "invuln") out.push(o.duration + "ph");
+      if (e.action === "kill") { if (o.penetrating) out.push("penetrating"); if (o.useGun) out.push("gun"); }
+      if (e.action === "investigate") out.push(o.read);
+      if (e.action === "grant") out.push(o.item);
+      if (e.action === "mark") out.push(o.flag + (o.flagDur ? ` ${o.flagDur}ph` : ""));
+      return out.join(", ");
+    },
+    timeframeLabel(e) {
+      if (e.timeframe === "end") return "end of phase";
+      const id = this.landsOnId(e);
+      return id ? "lands " + this.phaseName(id) : "queued — no landing phase yet";
+    },
+    evNew() {
+      this.ui.evErr = "";
+      this.ui.ev = { id: null, actor: "", action: "kill", target: "", timeframe: "immediate", note: "",
+        opts: { mode: "by", to: "", duration: 1, penetrating: false, useGun: false,
+                read: "alignment", item: "gun", flag: "marked", flagDur: null } };
+    },
+    evEdit(e) { this.ui.ev = clone(e); this.ui.evErr = ""; },
+    evSave() {
+      const ev = this.ui.ev;
+      if (!ev.actor) { this.ui.evErr = "Pick an actor."; return; }
+      if (ev.action === "redirect" && !ev.opts.to) { this.ui.evErr = "Pick a redirect destination."; return; }
+      if (ev.id) {
+        const i = this.game.events.findIndex(x => x.id === ev.id);
+        this.apply("event edited: " + this.evLine(ev), () => this.game.events.splice(i, 1, clone(ev)));
+      } else {
+        const rec = { ...clone(ev), id: uid(), declaredPhase: this.activePhase.id, status: "pending" };
+        this.apply("event: " + this.evLine(rec), () => this.game.events.push(rec));
+      }
+      this.ui.ev = null;
+    },
+    evDelete(e) {
+      const i = this.game.events.findIndex(x => x.id === e.id);
+      this.apply("event removed: " + this.evLine(e), () => this.game.events.splice(i, 1));
     },
 
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
