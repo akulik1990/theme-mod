@@ -115,7 +115,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   padding:4px 6px 2px;border-bottom:1px solid var(--line);margin-bottom:2px}
 .ghead:hover{color:var(--text)}
 .gctl{border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
-.tsvmap select{max-width:130px}
+.tsvmap{table-layout:fixed;width:100%}
+.tsvmap th,.tsvmap td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 4px}
+.tsvmap select{width:100%;min-width:0;padding:3px 4px}
 .tsvmap .orig{color:var(--dim);font-weight:400;font-size:11px}
 .tsvmap .off{opacity:.35}
 .evform{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px}
@@ -134,7 +136,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   .statbar select{max-width:80px}
   main{padding:8px}
   .card{padding:10px;margin-bottom:10px}
-  .card table{display:block;overflow-x:auto;white-space:nowrap}
+  .card table:not(.tsvmap){display:block;overflow-x:auto;white-space:nowrap}
   .fgrid{grid-template-columns:auto 1fr}
   .overlay{padding:10px 6px}
   .modal{padding:12px}
@@ -325,9 +327,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           </tr>
           <tr><th v-for="(hd,ci) in ui.tsv.headers" class="orig" :class="{off: ui.tsv.map[ci]==='(skip)'}">↳ {{ hd }}</th></tr>
           <tr v-for="r in ui.tsv.rows.slice(0,6)">
-            <td v-for="(cell,ci) in r" class="small" :class="{off: ui.tsv.map[ci]==='(skip)'}">{{ cell.slice(0,40) }}</td>
+            <td v-for="(cell,ci) in r" class="small" :class="{off: ui.tsv.map[ci]==='(skip)'}">{{ cell }}</td>
           </tr>
-          <tr v-if="ui.tsv.rows.length > 6"><td :colspan="ui.tsv.headers.length" class="dim small">… {{ ui.tsv.rows.length - 6 }} more row(s)</td></tr>
+          <tr v-if="ui.tsv.rows.length > 6"><td :colspan="ui.tsv.headers.length" class="dim small">+ {{ ui.tsv.rows.length - 6 }} more rows, all included in the import</td></tr>
         </table>
         <div class="row" style="margin-top:10px">
           <select v-model="ui.tsvMode">
