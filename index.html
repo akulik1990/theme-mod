@@ -37,10 +37,10 @@ textarea{width:100%;resize:vertical}
 label{color:var(--dim);font-size:12px}
 .modwho{display:flex;align-items:center;gap:6px}
 .modwho input{width:90px}
-.statbar{display:flex;align-items:center;gap:12px;margin-right:12px}
-.statbar .stat{display:flex;flex-direction:column;align-items:center;line-height:1.15}
-.statbar .stat label{font-size:9px;text-transform:uppercase;letter-spacing:.08em}
-.statbar .stat b{font-size:13px}
+.statbar{display:flex;align-items:center;gap:16px;margin-right:14px}
+.statbar .stat{display:flex;flex-direction:column;align-items:center;line-height:1.2}
+.statbar .stat label{font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.statbar .stat b{font-size:17px}
 .ck{accent-color:var(--acc);margin:0}
 main{padding:16px;max-width:1500px;margin:0 auto}
 .viewwrap{max-width:980px;margin:0 auto}
@@ -64,9 +64,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .chip .x{cursor:pointer;color:var(--dim)}
 .chip .x:hover{color:var(--bad)}
 .gamewrap{display:grid;grid-template-columns:380px 1fr;gap:16px;align-items:start}
-.gamewrap.withnotes{grid-template-columns:380px 1fr 280px}
+.gamewrap.withnotes{grid-template-columns:380px 1fr 340px}
 .notescol{position:sticky;top:56px}
-.notescol textarea{min-height:340px;font-size:13px}
+.notescol textarea{min-height:70vh;font-size:13px}
 @media (max-width:1100px){.gamewrap.withnotes{grid-template-columns:380px 1fr}.notescol{display:none}}
 @media (max-width:900px){.gamewrap,.gamewrap.withnotes{grid-template-columns:1fr}.notescol{display:block;position:static}}
 .rostercol{position:sticky;top:56px;max-height:calc(100vh - 72px);overflow-y:auto}
@@ -85,8 +85,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:18px;width:560px;max-width:100%}
 .modal h2{margin:0 0 12px;color:var(--acc);font-size:16px}
+.modal select,.modal input:not([type=checkbox]){max-width:100%;min-width:0}
 .fgrid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8px;align-items:center}
 .fgrid label{text-align:right}
+.fgrid select,.fgrid input{width:100%;min-width:0}
 .tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
 .tabs button.done{color:var(--good)}
 .evrow{display:flex;gap:8px;align-items:baseline;padding:4px 6px;border-radius:6px}
@@ -747,7 +749,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <option value="alignment">as alignment</option>
               <option value="category">as category</option>
               <option value="description">as description</option>
-              <option value="track">as seen by watchers</option>
+              <option value="track">as seen by watchers / trackers</option>
             </select>
             <input v-model="ui.disgVal" :placeholder="ui.disgAs==='track' ? 'shown name (empty = invisible)' : 'value'" style="width:150px">
           </template>
@@ -938,6 +940,8 @@ const app = createApp({
           items: true, flags: true, notes: true, ...(v.show || {}) };
         if (!v.catDefaultOn) { v.show.category = true; v.catDefaultOn = true; }  // category now defaults on
         if (v.notes == null) v.notes = "";
+        /* new default sort: alive first, then alignment in reverse preset order */
+        if (!v.sortDefaultV2) { v.sorts = [{ key: "alive", dir: "asc" }, { key: "align", dir: "desc" }]; v.sortDefaultV2 = true; }
         return v;
       })(),
       modName: localStorage.getItem(LS.mod) || "mod",
@@ -1552,13 +1556,20 @@ const app = createApp({
     resolvePhase(ph) {
       const g = this.game;
       const order = g.preset.priority;
+      /* a character listed in the priority order pulls ALL their actions to that spot
+         and powers through roleblocks */
+      const charPrio = name => {
+        const pl = this.byName(name);
+        return pl ? order.indexOf("char:" + pl.character) : -1;
+      };
       const pos = e => {
         if (CONTROL_ACTIONS.includes(e.action)) return -1;     // control step: always first
-        /* a character listed in the priority order pulls ALL their actions to that spot */
-        const pl = this.byName(e.actor);
-        if (pl) {
-          const ci = order.indexOf("char:" + pl.character);
-          if (ci !== -1) return ci;
+        const ci = charPrio(e.actor);
+        if (ci !== -1) return ci;
+        /* granting the invulnerability flag resolves at the invuln tier, not the grant tier */
+        if (e.action === "grant" && e.opts && e.opts.item === "flag:invuln") {
+          const iv = order.indexOf("invuln");
+          if (iv !== -1) return iv;
         }
         if (e.action.startsWith("c:")) return 99;              // custom: log-only, last
         const i = order.indexOf(e.action);
@@ -1613,7 +1624,7 @@ const app = createApp({
       const declaredBlockTargets = new Set(sorted.filter(e => e.action === "roleblock").map(e => e.target));
       for (const e of sorted) {
         if (e.action !== "redirect") continue;
-        if (declaredBlockTargets.has(e.actor)) {
+        if (declaredBlockTargets.has(e.actor) && charPrio(e.actor) === -1) {
           prop.skipped.push(this.evLine(e) + " — roleblocked (redirect cancelled)");
           continue;
         }
@@ -1664,8 +1675,12 @@ const app = createApp({
           continue;
         }
         const wA = W[e.actor];
-        /* blocked actors lose everything after the control step; same-step blocks stay simultaneous */
-        if (wA && wA.blocked && p > -1) { prop.skipped.push(this.evLine(e) + " — roleblocked"); continue; }
+        /* blocked actors lose everything after the control step; same-step blocks stay
+           simultaneous; characters with explicit priority power through blocks */
+        if (wA && wA.blocked && p > -1 && charPrio(e.actor) === -1) {
+          prop.skipped.push(this.evLine(e) + " — roleblocked");
+          continue;
+        }
         const t = effTarget(e);
         const wT = W[t];
         if (!wT) { prop.skipped.push(this.evLine(e) + " — no valid target"); continue; }
@@ -1758,6 +1773,8 @@ const app = createApp({
             break;
           }
           case "grant":
+            /* invuln flag grants protect immediately (resolved at the invuln tier) */
+            if (e.opts.item === "flag:invuln" && !wT.stripped) wT.invuln = true;
             prop.grants.push({ target: t, ref: e.opts.item, duration: e.opts.grantDur || null });
             break;
         }
