@@ -1834,6 +1834,42 @@ const app = createApp({
         kp: [],
       });
 
+      /* day live mode: everything already applied this phase seeds the working state —
+         first come, first serve. An earlier day block stops later actions, an earlier
+         redirect bends them, saves and guards persist until used. Empty at night. */
+      const preBlocked = new Set();
+      {
+        const prior = g.events.filter(e2 => e2.status === "resolved" && this.landsOnId(e2) === ph.id);
+        const seedTarget = e2 => {
+          let t = (W[e2.actor] && W[e2.actor].forcedTarget) || e2.target;
+          if (t && W[t] && W[t].deflectTo) t = W[t].deflectTo;
+          return t;
+        };
+        for (const e2 of prior) {
+          if (W[e2.actor] && W[e2.actor].blocked && charPrio(e2.actor) === -1) continue;
+          const t2 = seedTarget(e2);
+          const wT = W[t2];
+          if (!wT) continue;
+          switch (e2.action) {
+            case "roleblock": wT.blocked = true; preBlocked.add(t2); break;
+            case "redirect":
+              if (e2.opts.mode === "at") wT.deflectTo = e2.opts.to; else wT.forcedTarget = e2.opts.to;
+              break;
+            case "strip": wT.stripped = true; wT.protections = []; break;
+            case "bodyguard": wT.guards.push(e2.actor); break;
+            case "save":
+              if (!wT.stripped) wT.protections.push({ type: "save", fromInventory: false, source: e2.actor });
+              break;
+          }
+        }
+        /* external saves already burned earlier this phase stay burned */
+        (((ph.liveReport || {}).protUses) || []).forEach(u => {
+          if (u.fromInventory || !W[u.player]) return;
+          const i = W[u.player].protections.findIndex(pr => !pr.fromInventory);
+          if (i !== -1) W[u.player].protections.splice(i, 1);
+        });
+      }
+
       const prop = { phase: ph.name, deaths: [], saved: [], checks: [], grants: [], marks: [],
         protUses: [], itemUses: [], logs: [], skipped: [], events: sorted.map(e => e.id),
         /* full activity for the discord block — every event incl. control + custom */
@@ -1905,7 +1941,7 @@ const app = createApp({
       const declaredBlockTargets = new Set(sorted.filter(e => e.action === "roleblock").map(e => e.target));
       for (const e of sorted) {
         if (e.action !== "redirect") continue;
-        if (declaredBlockTargets.has(e.actor) && charPrio(e.actor) === -1) {
+        if ((declaredBlockTargets.has(e.actor) || preBlocked.has(e.actor)) && charPrio(e.actor) === -1) {
           prop.skipped.push(this.evLine(e) + " — roleblocked (redirect cancelled)");
           continue;
         }
@@ -1958,8 +1994,9 @@ const app = createApp({
         }
         const wA = W[e.actor];
         /* blocked actors lose everything after the control step; same-step blocks stay
-           simultaneous; characters with explicit priority power through blocks */
-        if (wA && wA.blocked && p > -1 && charPrio(e.actor) === -1) {
+           simultaneous; a day-live block (preBlocked) stops even later control actions;
+           characters with explicit priority power through blocks */
+        if (wA && wA.blocked && (p > -1 || preBlocked.has(e.actor)) && charPrio(e.actor) === -1) {
           prop.skipped.push(this.evLine(e) + " — roleblocked");
           continue;
         }
