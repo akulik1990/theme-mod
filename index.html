@@ -37,6 +37,12 @@ textarea{width:100%;resize:vertical}
 label{color:var(--dim);font-size:12px}
 .modwho{display:flex;align-items:center;gap:6px}
 .modwho input{width:90px}
+.syncbtn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.syncbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
+.syncbtn.online .dot{background:var(--good)}
+.syncbtn.starting .dot,.syncbtn.connecting .dot{background:var(--third)}
+.syncbtn.dropped .dot,.syncbtn.error .dot{background:var(--bad)}
+.synccode{font:600 18px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:var(--acc)}
 .statbar{display:flex;align-items:center;gap:16px;margin-right:14px}
 .statbar .stat{display:flex;flex-direction:column;align-items:center;line-height:1.2}
 .statbar .stat label{font-size:10px;text-transform:uppercase;letter-spacing:.08em}
@@ -134,7 +140,59 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     <span class="stat"><label>phase</label><b>{{ currentPhase.name }}</b></span>
   </div>
   <div class="modwho"><label>mod</label><input v-model="modName" title="Your name in the activity log"></div>
+  <button class="mini syncbtn" :class="ui.sync.status" @click="ui.sync.open=true"
+    :title="ui.sync.err || 'co-mod session'">
+    <span class="dot"></span>{{ syncBadge() || 'co-mod' }}
+  </button>
 </header>
+
+<!-- co-mod session panel -->
+<div v-if="ui.sync.open" class="overlay" @click.self="ui.sync.open=false">
+  <div class="modal" style="width:460px">
+    <div class="spread">
+      <h2>Co-mod session</h2>
+      <button class="mini ghost" @click="ui.sync.open=false">✕ close</button>
+    </div>
+
+    <template v-if="ui.sync.role==='solo'">
+      <p class="dim small">Peer-to-peer over WebRTC; the host's browser is the hub. Everyone keeps a
+        full local copy (crash-safe), edits flow both ways, host state wins on conflict.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" @click="syncHost">Host a session</button>
+        <span class="dim small">— get a code to share on voice</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input v-model="ui.sync.joinCode" placeholder="code from host" style="width:140px;text-transform:uppercase"
+          @keyup.enter="syncJoin">
+        <button @click="syncJoin">Join</button>
+        <span class="dim small">— adopts the host's game state</span>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="row">
+        <span class="badge" :class="{warn: ui.sync.status!=='online'}">{{ ui.sync.role }} · {{ ui.sync.status }}</span>
+        <span v-if="ui.sync.lastSync" class="dim small">last sync: {{ ui.sync.lastSync }}</span>
+      </div>
+      <template v-if="ui.sync.role==='host'">
+        <p style="margin:12px 0 4px">code: <b class="synccode">{{ ui.sync.code }}</b>
+          <button class="mini" style="margin-left:8px" @click="copyBtn($event, ui.sync.code)">copy</button></p>
+        <p class="dim small">Guests: {{ ui.sync.peers.length ? ui.sync.peers.join(", ") : "none connected yet" }}</p>
+      </template>
+      <template v-else>
+        <p class="dim small" style="margin-top:10px">Mods online: {{ ui.sync.peers.length ? ui.sync.peers.join(", ") : "—" }}</p>
+        <div class="row" v-if="ui.sync.status==='dropped' || ui.sync.status==='error'" style="margin-top:8px">
+          <button @click="syncJoin">Reconnect</button>
+          <button class="danger" @click="syncTakeOver">Take over as host</button>
+        </div>
+      </template>
+      <p class="msg err" v-if="ui.sync.err">{{ ui.sync.err }}</p>
+      <div class="row" style="margin-top:14px">
+        <button class="danger" @click="syncLeave">{{ ui.sync.role==='host' ? 'Stop hosting' : 'Leave session' }}</button>
+      </div>
+    </template>
+  </div>
+</div>
 <main>
 
   <section v-if="route==='presets'" class="viewwrap">
@@ -868,20 +926,162 @@ function debounce(fn, ms) {
 /* ---------- persistence ---------- */
 
 const LS = { preset:"theme-mod-preset", presetsLegacy:"theme-mod-presets",
-  game:"theme-mod-game", view:"theme-mod-view", mod:"theme-mod-modname" };
+  game:"theme-mod-game", view:"theme-mod-view", mod:"theme-mod-modname", sync:"theme-mod-sync" };
 function lsLoad(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
   catch (e) { return fallback; }
 }
 const lsSave = (key, val) => localStorage.setItem(key, JSON.stringify(val));
 
-/* ---------- sync seam (transport plugs in at step 9) ---------- */
+/* ---------- co-mod sync: PeerJS star, host authority ----------
+   Full-document broadcast: a guest edit sends the whole doc to the host, the host
+   adopts it and rebroadcasts to everyone else. Last write wins; the activity log
+   carries attribution; mods coordinate on voice. PeerJS loads from CDN only when
+   a session starts — solo games never fetch it. */
+
+const PEERJS_SRC = "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js";
+const PEERJS_SRI = "sha384-x0YgkOr/3UOZP2CRDxGW9e0Q+2Qjyr3uJrm4xU32Y7ZCNAo7Cc7bjhrZMi/dwczu";
+const PEER_PREFIX = "theme-desk-";
 
 const SYNC = {
-  send(doc) {},                      // broadcast full game doc
-  onReceive(cb) {},                  // incoming doc from host
-  peers() { return []; },
-  status() { return "solo"; },
+  vm: null, peer: null, conns: [], mute: false, libP: null,
+
+  init(vm) { this.vm = vm; },
+  get s() { return this.vm.ui.sync; },
+
+  lib() {
+    if (window.Peer) return Promise.resolve(window.Peer);
+    if (!this.libP) this.libP = new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = PEERJS_SRC;
+      el.integrity = PEERJS_SRI;
+      el.crossOrigin = "anonymous";
+      el.onload = () => res(window.Peer);
+      el.onerror = () => { this.libP = null; rej(new Error("could not load PeerJS from CDN")); };
+      document.head.appendChild(el);
+    });
+    return this.libP;
+  },
+
+  newCode() {                        // 6 chars, no ambiguous letters
+    const ab = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    return [...crypto.getRandomValues(new Uint8Array(6))].map(b => ab[b % ab.length]).join("");
+  },
+
+  persist() {
+    lsSave(LS.sync, { role: this.s.role, code: this.s.code, joinCode: this.s.joinCode });
+  },
+
+  async host(reuseCode) {
+    try {
+      const Peer = await this.lib();
+      this.leave(true);
+      const code = reuseCode || this.newCode();
+      Object.assign(this.s, { role: "host", status: "starting", code, err: "", peers: [] });
+      const peer = new Peer(PEER_PREFIX + code.toLowerCase());
+      this.peer = peer;
+      peer.on("open", () => { this.s.status = "online"; this.persist(); });
+      peer.on("disconnected", () => {      // lost the signaling server; existing conns survive
+        if (this.s.role === "host") { this.s.status = "signal lost — reconnecting"; peer.reconnect(); }
+      });
+      peer.on("error", err => {
+        if (err.type === "unavailable-id" && !this._retried) {
+          this._retried = true;            // stale ghost of a previous tab — take a fresh code
+          this.host(this.newCode());
+        } else { this.s.status = "error"; this.s.err = String(err.type || err); }
+      });
+      peer.on("connection", conn => this.wireGuest(conn));
+    } catch (e) { this.s.status = "error"; this.s.err = e.message; }
+  },
+
+  wireGuest(conn) {
+    conn.on("open", () => {
+      this.conns.push(conn);
+      conn._modName = (conn.metadata && conn.metadata.name) || "co-mod";
+      this.refreshPeers();
+      if (this.vm.game) conn.send({ t: "doc", doc: clone(this.vm.game), by: this.vm.modName });
+    });
+    conn.on("data", m => {
+      if (!m || typeof m !== "object") return;
+      if (m.t === "hello") { conn._modName = m.name || conn._modName; this.refreshPeers(); }
+      if (m.t === "doc" && m.doc) {
+        this.adopt(m.doc, m.by);
+        this.conns.forEach(c => { if (c !== conn && c.open) c.send(m); });
+      }
+    });
+    const drop = () => {
+      this.conns = this.conns.filter(c => c !== conn);
+      this.refreshPeers();
+    };
+    conn.on("close", drop);
+    conn.on("error", drop);
+  },
+
+  refreshPeers() {
+    this.s.peers = this.conns.filter(c => c.open !== false).map(c => c._modName || "co-mod");
+    if (this.s.role === "host") {
+      const roster = [this.vm.modName + " (host)", ...this.s.peers];
+      this.conns.forEach(c => { if (c.open) c.send({ t: "peers", peers: roster }); });
+    }
+  },
+
+  async join(code) {
+    try {
+      const Peer = await this.lib();
+      this.leave(true);
+      Object.assign(this.s, { role: "guest", status: "connecting", joinCode: code, err: "", peers: [] });
+      this.persist();
+      const peer = new Peer();
+      this.peer = peer;
+      peer.on("error", err => {
+        this.s.status = "error";
+        this.s.err = err.type === "peer-unavailable" ? "no host found for that code" : String(err.type || err);
+      });
+      peer.on("open", () => {
+        const conn = peer.connect(PEER_PREFIX + code.toLowerCase(),
+          { reliable: true, metadata: { name: this.vm.modName } });
+        this.conns = [conn];
+        conn.on("open", () => {
+          this.s.status = "online";
+          conn.send({ t: "hello", name: this.vm.modName });
+        });
+        conn.on("data", m => {
+          if (!m || typeof m !== "object") return;
+          if (m.t === "doc" && m.doc) this.adopt(m.doc, m.by);
+          if (m.t === "peers") this.s.peers = m.peers;
+        });
+        conn.on("close", () => { if (this.s.role === "guest") this.s.status = "dropped"; });
+      });
+    } catch (e) { this.s.status = "error"; this.s.err = e.message; }
+  },
+
+  adopt(doc, from) {
+    this.mute = true;
+    const openName = this.vm.ui.modalP && this.vm.ui.modalP.name;
+    this.vm.game = doc;
+    if (openName)      // re-point an open player modal at the adopted doc
+      this.vm.ui.modalP = doc.players.find(p => p.name === openName) || null;
+    this.vm.persistGame();
+    if (!this.vm.ui.modalP && this.vm.route !== "game") this.vm.route = "game";
+    this.s.lastSync = `${from || "peer"} · ${new Date().toLocaleTimeString()}`;
+    setTimeout(() => { this.mute = false; }, 600);   // outlives the 250ms doc watcher, kills echo
+  },
+
+  /* viaWatcher sends are echo candidates (the watcher also fires on adoption) and
+     respect the mute window; explicit apply() sends are real local edits and always go */
+  send(doc, viaWatcher) {
+    if (viaWatcher && this.mute) return;
+    if (this.s && this.s.role !== "solo" && this.s.status === "online" && doc) {
+      const m = { t: "doc", doc: clone(doc), by: this.vm.modName };
+      this.conns.forEach(c => { if (c.open) c.send(m); });
+    }
+  },
+
+  leave(silent) {
+    if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
+    this.peer = null; this.conns = []; this._retried = false;
+    if (!silent) { Object.assign(this.s, { role: "solo", status: "off", peers: [], err: "" }); this.persist(); }
+  },
 };
 
 /* ---------- document factories ---------- */
@@ -952,6 +1152,8 @@ const app = createApp({
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false,
         rosterMenu: false, statFlag: "",
+        sync: { open: false, role: "solo", status: "off", code: "", joinCode: "",
+                err: "", peers: [], lastSync: "" },
       },
     };
   },
@@ -2012,6 +2214,29 @@ const app = createApp({
       return out.join("\n").trim();
     },
 
+    /* ----- co-mod session controls ----- */
+    syncHost() {
+      SYNC.host();
+    },
+    syncJoin() {
+      const code = (this.ui.sync.joinCode || "").trim().toUpperCase();
+      if (code.length < 4) { this.ui.sync.err = "Enter the host's code."; return; }
+      if (this.game && !confirm("Joining adopts the host's game state — your local copy is replaced (it stays exportable in this tab until then). Continue?")) return;
+      SYNC.join(code);
+    },
+    syncLeave() { SYNC.leave(); },
+    /* host died: any guest can promote with their own copy and share the fresh code on voice */
+    syncTakeOver() {
+      if (!confirm("Take over as host with YOUR current copy of the game? Other mods must rejoin with the new code.")) return;
+      SYNC.host();
+    },
+    syncBadge() {
+      const s = this.ui.sync;
+      if (s.role === "solo") return "";
+      if (s.role === "host") return `hosting ${s.code} · ${s.peers.length} guest${s.peers.length === 1 ? "" : "s"}`;
+      return s.status === "online" ? `co-mod · ${s.code || s.joinCode}` : `co-mod · ${s.status}`;
+    },
+
     /* single mutation path: mutate inside fn, get attribution + persist + sync */
     apply(op, fn) {
       fn();
@@ -2056,13 +2281,17 @@ const app = createApp({
 
   watch: {
     preset: { deep: true, handler: debounce(function () { lsSave(LS.preset, this.preset); }, 250) },
-    game:    { deep: true, handler: debounce(function () { this.persistGame(); }, 250) },
+    /* the deep watcher also catches modal v-model edits that bypass apply() — both persist AND sync */
+    game:    { deep: true, handler: debounce(function () { this.persistGame(); SYNC.send(this.game, true); }, 250) },
     view:    { deep: true, handler: debounce(function () { lsSave(LS.view, this.view); }, 250) },
     modName() { localStorage.setItem(LS.mod, this.modName); },
   },
 
   mounted() {
     window.$vm = this;            // console access for debugging
+    SYNC.init(this);
+    const ss = lsLoad(LS.sync, null);        // prefill last session's codes; reconnecting stays manual
+    if (ss) { this.ui.sync.code = ss.code || ""; this.ui.sync.joinCode = ss.joinCode || ""; }
     /* one-time migration from the old multi-preset storage: keep the fullest one */
     if (!this.preset) {
       const legacy = lsLoad(LS.presetsLegacy, []);
