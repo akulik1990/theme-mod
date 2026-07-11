@@ -841,7 +841,7 @@ const STD_ITEMS = [
 /* baked flags = engine-aware ones only (plus the generic stacks counter);
    theme flavour like "marked"/"cursed" belongs in preset customFlags */
 const STD_FLAGS = [
-  { key:"invuln",      icon:"🛡️", name:"Invulnerable", description:"Hard immunity; beats all KP incl. penetrating. Removed by strip." },
+  { key:"invuln",      icon:"🛡️", name:"Invulnerable", description:"Hard immunity; beats all KP incl. penetrating. Not affected by strip." },
   { key:"roleblocked", icon:"⛓️", name:"Roleblocked",  description:"Was roleblocked." },
   { key:"stripped",    icon:"💔", name:"Stripped",     description:"Protection stripped." },
   { key:"disguised",   icon:"🎭", name:"Disguised",    description:"Checks return the disguise, not the truth." },
@@ -1615,6 +1615,40 @@ const app = createApp({
         return dim === "character" ? pl.character : pl[dim];
       };
 
+      /* has-flag / has-item checks read the END-OF-PHASE state: this phase's grants
+         count as held, consumed items count as gone, engine marks count as flagged */
+      const refName = ref => {
+        const kind = ref.slice(0, ref.indexOf(":")), key = ref.slice(ref.indexOf(":") + 1);
+        if (kind === "item") { const d = STD_ITEMS.find(x => x.key === key); return d ? d.name : key; }
+        if (kind === "flag") { const d = STD_FLAGS.find(x => x.key === key); return d ? d.name : key; }
+        return key;   // citem / cflag refs store the name itself
+      };
+      const stdItemName = key => { const d = STD_ITEMS.find(x => x.key === key); return d ? d.name : key; };
+      const effHasItem = (pl, nm) => {
+        const names = pl.inventory.map(it => it.name);
+        prop.grants.forEach(gr => {
+          if (gr.target === pl.name && (gr.ref.startsWith("item:") || gr.ref.startsWith("citem:"))) names.push(refName(gr.ref));
+        });
+        prop.itemUses.forEach(u => {
+          if (u.player !== pl.name) return;
+          const i = names.indexOf(stdItemName(u.key));
+          if (i !== -1) names.splice(i, 1);
+        });
+        prop.protUses.forEach(u => {
+          if (!u.fromInventory || u.player !== pl.name) return;
+          const i = names.indexOf(stdItemName(u.type));
+          if (i !== -1) names.splice(i, 1);
+        });
+        return names.includes(nm);
+      };
+      const effHasFlag = (pl, nm) => {
+        if (pl.flags.some(f => f.name === nm)) return true;
+        if (prop.grants.some(gr => gr.target === pl.name
+          && (gr.ref.startsWith("flag:") || gr.ref.startsWith("cflag:")) && refName(gr.ref) === nm)) return true;
+        return prop.marks.some(mk => mk.target === pl.name
+          && ((STD_FLAGS.find(x => x.key === mk.flag) || {}).name === nm));
+      };
+
       /* control pre-pass — simultaneous, roleblock priority:
          1. a redirect by a declared block target is cancelled (A blocks B → no redirect)
          2. surviving redirects retarget everything, blocks included
@@ -1645,8 +1679,8 @@ const app = createApp({
           for (const hit of w.kp.splice(0)) {   // drain, so late (char-prioritised) KP resolves on the final pass
             let victim = p.name, vw = w, via = null;
             const guard = w.guards.find(gn => !diedNow.has(gn) && !dead.has(gn));
-            if (!(w.invuln && !w.stripped) && guard) { victim = guard; vw = W[guard]; via = p.name; }
-            if (vw.invuln && !vw.stripped) {
+            if (!w.invuln && guard) { victim = guard; vw = W[guard]; via = p.name; }
+            if (vw.invuln) {
               prop.saved.push({ player: victim, how: "invulnerable", vs: hit.source });
             } else if (hit.penetrating) {
               diedNow.add(victim);
@@ -1689,7 +1723,8 @@ const app = createApp({
             prop.marks.push({ target: t, flag: "roleblocked", duration: 1 });
             break;
           case "strip":
-            wT.stripped = true; wT.invuln = false; wT.protections = [];
+            /* strip clears consumable protections only — invulnerability is untouched */
+            wT.stripped = true; wT.protections = [];
             prop.marks.push({ target: t, flag: "stripped", duration: 1 });
             break;
           case "bodyguard":
@@ -1706,7 +1741,7 @@ const app = createApp({
             if (e.opts.useGun) prop.itemUses.push({ player: e.actor, key: "gun" });
             break;
           case "lynch":
-            if (wT.invuln && !wT.stripped) prop.saved.push({ player: t, how: "immune", vs: "lynch" });
+            if (wT.invuln) prop.saved.push({ player: t, how: "immune", vs: "lynch" });
             else { diedNow.add(t); prop.deaths.push({ player: t, by: e.actor, lynch: true }); }
             break;
           case "investigate": {
@@ -1744,9 +1779,7 @@ const app = createApp({
               }
               if (rd === "flag" || rd === "item") {
                 const nm = rd === "flag" ? e.opts.flagName : e.opts.itemName;
-                const has = rd === "flag"
-                  ? pl.flags.some(f => f.name === nm)
-                  : pl.inventory.some(it => it.name === nm);
+                const has = rd === "flag" ? effHasFlag(pl, nm) : effHasItem(pl, nm);
                 parts.push({ label: `${rd} "${nm || "?"}"`, shown: has ? "YES" : "NO", truth: has ? "YES" : "NO" });
                 continue;
               }
@@ -1768,10 +1801,10 @@ const app = createApp({
           }
           case "grant":
             /* engine-aware grants take effect this phase (grant sits high in the default
-               order): invuln protects, vest/save absorb; commit adds the item, and a
-               same-phase absorb then consumes it — net zero, correct */
+               order): invuln protects (strip-proof), vest/save absorb unless stripped;
+               commit adds the item, and a same-phase absorb then consumes it — net zero */
+            if (e.opts.item === "flag:invuln") wT.invuln = true;
             if (!wT.stripped) {
-              if (e.opts.item === "flag:invuln") wT.invuln = true;
               if (e.opts.item === "item:vest") wT.protections.push({ type: "vest", fromInventory: true });
               if (e.opts.item === "item:save") wT.protections.push({ type: "save", fromInventory: true });
             }
