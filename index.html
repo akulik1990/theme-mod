@@ -1002,7 +1002,10 @@ const app = createApp({
       return c ? c.abilities : "";
     },
     statLynch() { return Math.floor(this.statAlive() / 2) + 1; },
-    rosterFlat() { return [...this.game.players].sort((a, b) => a.order - b.order); },
+    /* player dropdowns: alive first, then alphabetical */
+    rosterFlat() {
+      return [...this.game.players].sort((a, b) => (b.alive - a.alive) || a.name.localeCompare(b.name));
+    },
     tabIdx() {
       const n = this.game.phases.length;
       return (this.ui.tab == null || this.ui.tab >= n) ? n - 1 : this.ui.tab;
