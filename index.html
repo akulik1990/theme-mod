@@ -115,6 +115,9 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   padding:4px 6px 2px;border-bottom:1px solid var(--line);margin-bottom:2px}
 .ghead:hover{color:var(--text)}
 .gctl{border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
+.tsvmap select{max-width:130px}
+.tsvmap .orig{color:var(--dim);font-weight:400;font-size:11px}
+.tsvmap .off{opacity:.35}
 .evform{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px}
 /* ---- mobile ---- */
 @media (max-width:700px){
@@ -306,34 +309,35 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     </div>
 
     <div class="card">
-      <h2>Import characters (paste from Sheets)</h2>
-      <p class="dim small">Copy the columns straight out of the spreadsheet (TSV). First row must be headers.</p>
-      <textarea v-model="ui.tsvText" rows="5" placeholder="Character&#9;Category&#9;Alignment&#9;..."></textarea>
-      <div class="row" style="margin-top:8px">
-        <button @click="tsvParse">Parse</button>
-        <span class="msg err" v-if="ui.tsvErr">{{ ui.tsvErr }}</span>
-      </div>
+      <h2>Import characters <span class="dim small">paste straight from Google Sheets</span></h2>
+      <textarea v-model="ui.tsvText" rows="3" @input="tsvParse"
+        placeholder="In Sheets, select the character columns INCLUDING the header row, copy, and paste here. Parsing is automatic."></textarea>
+      <p class="msg err" v-if="ui.tsvErr && ui.tsvText.trim()" style="margin:6px 0 0">{{ ui.tsvErr }}</p>
       <template v-if="ui.tsv">
-        <h3>Column mapping</h3>
-        <div class="row">
-          <span v-for="(hd,ci) in ui.tsv.headers" class="chip">
-            {{ hd }} →
-            <select v-model="ui.tsv.map[ci]">
-              <option v-for="f in TSV_FIELDS" :value="f">{{ f }}</option>
-            </select>
-          </span>
-        </div>
-        <h3>Preview ({{ ui.tsv.rows.length }} rows)</h3>
-        <table>
-          <tr><th v-for="hd in ui.tsv.headers">{{ hd }}</th></tr>
-          <tr v-for="r in ui.tsv.rows.slice(0,5)"><td v-for="cell in r" class="small">{{ cell.slice(0,60) }}</td></tr>
+        <h3>Column mapping <span class="dim">each column shows the field it fills — fix any wrong guess; (skip) columns are ignored</span></h3>
+        <table class="tsvmap">
+          <tr>
+            <th v-for="(hd,ci) in ui.tsv.headers">
+              <select v-model="ui.tsv.map[ci]" :class="{dim: ui.tsv.map[ci]==='(skip)'}">
+                <option v-for="f in TSV_FIELDS" :value="f">{{ f }}</option>
+              </select>
+            </th>
+          </tr>
+          <tr><th v-for="(hd,ci) in ui.tsv.headers" class="orig" :class="{off: ui.tsv.map[ci]==='(skip)'}">↳ {{ hd }}</th></tr>
+          <tr v-for="r in ui.tsv.rows.slice(0,6)">
+            <td v-for="(cell,ci) in r" class="small" :class="{off: ui.tsv.map[ci]==='(skip)'}">{{ cell.slice(0,40) }}</td>
+          </tr>
+          <tr v-if="ui.tsv.rows.length > 6"><td :colspan="ui.tsv.headers.length" class="dim small">… {{ ui.tsv.rows.length - 6 }} more row(s)</td></tr>
         </table>
-        <div class="row" style="margin-top:8px">
+        <div class="row" style="margin-top:10px">
           <select v-model="ui.tsvMode">
             <option value="append">append to characters</option>
             <option value="replace">replace all characters</option>
           </select>
-          <button class="primary" @click="tsvImport">Import {{ ui.tsv.rows.length }} characters</button>
+          <button class="primary" @click="tsvImport" :disabled="!tsvImportable">
+            Import {{ tsvImportable }} character{{ tsvImportable === 1 ? '' : 's' }}</button>
+          <span class="dim small" v-if="!ui.tsv.map.includes('name')">map one column to “name” first</span>
+          <span class="dim small" v-else-if="tsvImportable < ui.tsv.rows.length">{{ ui.tsv.rows.length - tsvImportable }} row(s) without a name are skipped</span>
         </div>
       </template>
     </div>
@@ -1280,6 +1284,13 @@ const app = createApp({
       this.game.players.forEach(p => p.inventory.forEach(it => names.add(it.name)));
       return [...names].sort();
     },
+    /* rows that will actually import: name column mapped and non-empty */
+    tsvImportable() {
+      if (!this.ui.tsv) return 0;
+      const ni = this.ui.tsv.map.indexOf("name");
+      if (ni === -1) return 0;
+      return this.ui.tsv.rows.filter(r => (r[ni] || "").trim()).length;
+    },
     charAbilities() {
       if (!this.mp) return "";
       const c = this.game.preset.characters.find(x => x.name === this.mp.character);
@@ -1464,7 +1475,12 @@ const app = createApp({
     tsvParse() {
       this.ui.tsvErr = ""; this.ui.tsv = null;
       const lines = this.ui.tsvText.split("\n").map(l => l.replace(/\r$/, "")).filter(l => l.trim());
-      if (lines.length < 2) { this.ui.tsvErr = "Need a header row plus at least one data row."; return; }
+      if (!lines.length) return;
+      if (lines.length < 2) { this.ui.tsvErr = "That's only one row — include the header row plus the characters."; return; }
+      if (!lines[0].includes("\t") && lines.length >= 2) {
+        this.ui.tsvErr = "No columns detected — copy the cells in Sheets (not the plain text) so tabs come through.";
+        return;
+      }
       const headers = lines[0].split("\t").map(s => s.trim());
       const rows = lines.slice(1).map(l => {
         const cells = l.split("\t").map(s => s.trim());
@@ -1472,7 +1488,7 @@ const app = createApp({
         return cells.slice(0, headers.length);
       });
       const GUESS = [
-        [/^(char|name)/i, "name"], [/^cat/i, "category"], [/^align/i, "alignment"],
+        [/^(char|champ|name|role|hero)/i, "name"], [/^cat/i, "category"], [/^align/i, "alignment"],
         [/(pre|post|abilit|mechanic|power|desc)/i, "abilities"],
         [/^status/i, "status"], [/(comment|note)/i, "comments"],
       ];
