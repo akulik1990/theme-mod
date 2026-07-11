@@ -620,7 +620,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <h3>Checks</h3>
               <div v-for="c in ui.proposal.checks">🔍 {{ c.actor }} reads <b>{{ c.target }}</b>:
                 <template v-for="(p,pi) in c.parts">{{ pi ? '; ' : '' }}{{ p.label }} = {{ p.shown }}
-                  <span class="badge warn" v-if="p.shown !== p.truth">disguised — truth: {{ p.truth }}</span>
+                  <span class="badge warn" v-if="p.shown !== p.truth || p.disg">disguised — truth: {{ p.truth }}</span>
                 </template>
                 <span class="badge bad" v-if="c.actorDied">actor died this phase</span>
               </div>
@@ -1815,10 +1815,9 @@ const app = createApp({
       resolveKills();   // final drain — catches KP pushed after the kill tier (char-prioritised)
       /* watch/track read the whole night's visits, so they fill in last;
          a "track" disguise masks how the player appears to watchers/trackers */
-      const trackMask = n => {
+      const trackDisgOf = n => {
         const p2 = this.byName(n);
-        const dg = p2 && p2.flags.find(f => f.key === "disguised" && f.param && f.param.as === "track");
-        return dg ? dg.param.value : n;   // empty value = invisible
+        return (p2 && p2.flags.find(f => f.key === "disguised" && f.param && f.param.as === "track")) || null;
       };
       for (const c of prop.checks) for (const part of c.parts || []) {
         if (!part.pending) continue;
@@ -1828,17 +1827,23 @@ const app = createApp({
           ? visits.filter(v => v.target === c.target && v.actor !== c.actor && v.actor !== c.target).map(v => v.actor)
           : visits.filter(v => v.actor === c.target && v.target !== c.target).map(v => v.target);
         const truth = [...new Set(raw)];
-        let shown = [...new Set(raw.map(trackMask).filter(Boolean))].join(", ") || "no one";
+        let disg = false;   // any disguise in play — flagged for the mod even if the result matches truth
+        const mask = n => {
+          const dg = trackDisgOf(n);
+          if (dg) disg = true;
+          return dg ? dg.param.value : n;   // empty value = invisible
+        };
+        let shown = [...new Set(raw.map(mask).filter(Boolean))].join(", ") || "no one";
         /* tracking a track-disguised player: a REAL trail shows the decoy (or nothing);
            no visits means "no one" on both sides — a disguise masks movement, never invents it */
         if (!isWatch) {
-          const tp = this.byName(c.target);
-          const tdg = tp && tp.flags.find(f => f.key === "disguised" && f.param && f.param.as === "track");
-          if (tdg) shown = truth.length ? (tdg.param.value || "no one") : "no one";
+          const tdg = trackDisgOf(c.target);
+          if (tdg) { disg = true; shown = truth.length ? (tdg.param.value || "no one") : "no one"; }
         }
         part.label = isWatch ? "visited by" : "visited";
         part.shown = shown;
         part.truth = truth.join(", ") || "no one";
+        part.disg = disg;
       }
       return prop;
     },
