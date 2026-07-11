@@ -335,7 +335,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       <textarea v-model="ui.namesText" rows="8" placeholder="Akshin&#10;Maria&#10;…"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="primary" @click="setupShuffle" :disabled="!setupPreset">Shuffle characters onto names</button>
-        <button class="ghost" @click="importRoll" :disabled="!setupPreset" title="paste a roll exported earlier">Import roll…</button>
+        <button class="ghost" @click="importRoll" title="paste a roll exported earlier">Import roll…</button>
         <span class="dim small" v-if="setupNames.length">{{ setupNames.length }} players</span>
         <span class="msg err" v-if="ui.setupErr">{{ ui.setupErr }}</span>
       </div>
@@ -1286,6 +1286,7 @@ const app = createApp({
         ({ name: a.name, character: this.setupPreset.characters[a.charIdx].name })), null, 1);
     },
     importRoll() {
+      if (!this.setupPreset) { this.ui.setupErr = "Load a preset first (Presets tab) — the roll references its characters."; return; }
       const raw = prompt("Paste roll JSON ([{name, character}, …]):");
       if (!raw) return;
       this.ui.setupErr = "";
