@@ -105,6 +105,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 .badge{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--dim);white-space:nowrap}
 .badge.warn{color:var(--third);border-color:var(--third)}
 .badge.bad{color:var(--bad);border-color:var(--bad)}
+.badge.good{color:var(--good);border-color:var(--good)}
 .badge.manual{color:#fff;background:var(--bad);border-color:var(--bad);font-weight:700;letter-spacing:.04em}
 .landing{border:1px solid var(--acc2);border-radius:8px;padding:8px 10px;margin-bottom:12px;background:#171a2c}
 .landing h3{margin:0 0 6px;color:var(--acc2)}
@@ -550,7 +551,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <span class="badge manual" v-if="e.action.startsWith('c:')">manual</span>
             <span class="badge" v-if="e.timeframe!=='immediate'">{{ timeframeLabel(e) }}</span>
             <span class="badge warn" v-if="e.status==='cancelled'">cancelled</span>
-            <template v-if="!activePhase.committed">
+            <span class="badge good" v-if="e.status==='resolved' && !activePhase.committed">applied</span>
+            <template v-if="!activePhase.committed && e.status!=='resolved'">
               <button class="mini ghost" @click="evEdit(e)">✎</button>
               <button class="mini danger" @click="evDelete(e)">✕</button>
             </template>
@@ -634,7 +636,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               </template>
               <label>lands</label>
               <select v-model="ui.ev.timeframe">
-                <option value="immediate">this phase</option>
+                <option value="immediate">{{ activePhase.type==='day' ? 'now — applies immediately' : 'this phase' }}</option>
                 <option value="end">end of phase</option>
                 <option value="nextDay">next day</option>
                 <option value="nextNight">next night</option>
@@ -654,6 +656,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <!-- RESOLVE -->
           <div class="row" style="margin-top:14px" v-if="!activePhase.committed">
             <button class="primary" @click="proposeResolve">Mark resolved…</button>
+            <button v-if="activePhase.snapshot" class="ghost danger" @click="resetPhase"
+              title="undo live-applied actions, back to phase start">Reset {{ activePhase.name }}</button>
           </div>
           <div class="row" style="margin-top:14px" v-else>
             <button v-if="isLatestCommitted(activePhase)" class="danger" @click="unresolve">Un-resolve {{ activePhase.name }}</button>
@@ -672,6 +676,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <div class="modal" style="width:640px">
             <h2>Proposed outcome — {{ activePhase.name }}</h2>
             <p class="dim small">Advisory. Review, then commit; player state only changes on commit.</p>
+            <p class="dim small" v-if="activePhase.liveReport">
+              {{ activePhase.liveReport.eventLines.length }} day action(s) already applied live — included in the output, not listed below.</p>
             <template v-if="ui.proposal.deaths.length">
               <h3>Deaths</h3>
               <div v-for="d in ui.proposal.deaths">☠️ <b>{{ d.player }}</b> — {{ d.lynch ? 'lynched' : (d.penetrating ? 'penetrating ' : '') + 'KP from ' + d.by }}<span v-if="d.guarding" class="dim"> (took the hit for {{ d.guarding }})</span></div>
@@ -1691,12 +1697,18 @@ const app = createApp({
       if (ev.action === "investigate" && !ev.opts.reads.length) {
         this.ui.evErr = "Pick at least one thing to read."; return;
       }
+      const liveNow = r => this.activePhase.type === "day" && r.timeframe === "immediate"
+        && r.status === "pending" && this.landsOnId(r) === this.activePhase.id;
       if (ev.id) {
         const i = this.game.events.findIndex(x => x.id === ev.id);
         this.apply("event edited: " + this.evLine(ev), () => this.game.events.splice(i, 1, clone(ev)));
+        const rec = this.game.events[i];           // reactive ref, so the status flip renders
+        if (liveNow(rec)) this.resolveLive(rec);
       } else {
-        const rec = { ...clone(ev), id: uid(), declaredPhase: this.activePhase.id, status: "pending" };
-        this.apply("event: " + this.evLine(rec), () => this.game.events.push(rec));
+        this.apply("event: " + this.evLine(ev), () =>
+          this.game.events.push({ ...clone(ev), id: uid(), declaredPhase: this.activePhase.id, status: "pending" }));
+        const rec = this.game.events[this.game.events.length - 1];
+        if (liveNow(rec)) this.resolveLive(rec);
       }
       this.ui.ev = null;
     },
@@ -1786,7 +1798,7 @@ const app = createApp({
     /* ----- resolver (advisory) ----- */
     byName(name) { return this.game.players.find(p => p.name === name); },
 
-    resolvePhase(ph) {
+    resolvePhase(ph, only) {
       const g = this.game;
       const order = g.preset.priority;
       /* a character listed in the priority order pulls ALL their actions to that spot
@@ -1807,7 +1819,7 @@ const app = createApp({
         const i = order.indexOf(e.action);
         return endShift + (i === -1 ? 99 : i);
       };
-      const evs = g.events.filter(e => e.status === "pending" && this.landsOnId(e) === ph.id);
+      const evs = only || g.events.filter(e => e.status === "pending" && this.landsOnId(e) === ph.id);
       const sorted = evs.map((e, i) => ({ e, i }))
         .sort((a, b) => (pos(a.e) - pos(b.e)) || (a.i - b.i)).map(x => x.e);
 
@@ -2101,20 +2113,11 @@ const app = createApp({
       return { ...d, duration: mk.duration == null ? null : mk.duration };
     },
 
-    commitPhase() {
-      const ph = this.activePhase, prop = this.ui.proposal, g = this.game;
-      if (ph.committed) { this.ui.proposal = null; return; }
-      this.apply("phase committed: " + ph.name, () => {
-        ph.snapshot = clone(g.players);
-        /* expire old durations first, so newly applied flags live their full term */
-        g.players.forEach(pl => {
-          pl.flags = pl.flags.filter(f => {
-            if (f.duration == null) return true;
-            f.duration -= 1;
-            return f.duration > 0;
-          });
-        });
-        prop.deaths.forEach(d => {
+    /* apply a proposal's state effects (deaths, grants, consumptions, marks) —
+       shared by end-of-phase commit and live day resolution */
+    applyProp(ph, prop) {
+      const g = this.game;
+      prop.deaths.forEach(d => {
           const pl = this.byName(d.player);
           if (!pl) return;
           pl.alive = false; pl.deathPhase = ph.name;
@@ -2157,13 +2160,66 @@ const app = createApp({
           const i = pl ? pl.inventory.findIndex(it => it.key === u.key) : -1;
           if (i !== -1) pl.inventory.splice(i, 1);
         });
-        prop.marks.forEach(mk => {
-          const pl = this.byName(mk.target);
-          if (pl) pl.flags.push(this.flagInstFromMark(mk));
+      prop.marks.forEach(mk => {
+        const pl = this.byName(mk.target);
+        if (pl) pl.flags.push(this.flagInstFromMark(mk));
+      });
+    },
+
+    mergeReport(a, b) {
+      if (!a) return b;
+      const out = clone(a);
+      for (const k of Object.keys(b)) {
+        if (Array.isArray(b[k])) out[k] = [...(out[k] || []), ...b[k]];
+        else out[k] = out[k] || b[k];
+      }
+      return out;
+    },
+
+    /* day phases run in real time: an immediate day event applies to state the
+       moment it is logged (lynch → dead → counters move). Each resolves alone,
+       in log order; cross-event interplay is a night/end-of-phase thing. */
+    resolveLive(rec) {
+      const ph = this.activePhase;
+      this.apply("applied live: " + this.evLine(rec), () => {
+        if (!ph.snapshot) ph.snapshot = clone(this.game.players);   // un-resolve point = phase start
+        const prop = this.resolvePhase(ph, [rec]);
+        this.applyProp(ph, prop);
+        rec.status = "resolved";
+        ph.liveReport = this.mergeReport(ph.liveReport, prop);
+      });
+    },
+
+    /* undo live-applied day actions: back to phase start, events return to pending */
+    resetPhase() {
+      const ph = this.activePhase, g = this.game;
+      if (ph.committed || !ph.snapshot) return;
+      if (!confirm(`Reset ${ph.name} to its start? Live-applied actions are undone and their events go back to pending.`)) return;
+      this.apply("phase reset: " + ph.name, () => {
+        g.players.splice(0, g.players.length, ...clone(ph.snapshot));
+        g.events.forEach(e => { if (e.status === "resolved" && this.landsOnId(e) === ph.id) e.status = "pending"; });
+        ph.snapshot = null; ph.liveReport = null;
+      });
+    },
+
+    commitPhase() {
+      const ph = this.activePhase, prop = this.ui.proposal, g = this.game;
+      if (ph.committed) { this.ui.proposal = null; return; }
+      this.apply("phase committed: " + ph.name, () => {
+        if (!ph.snapshot) ph.snapshot = clone(g.players);   // may already exist from live day actions
+        /* expire old durations first, so newly applied flags live their full term */
+        g.players.forEach(pl => {
+          pl.flags = pl.flags.filter(f => {
+            if (f.duration == null) return true;
+            f.duration -= 1;
+            return f.duration > 0;
+          });
         });
+        this.applyProp(ph, prop);
         g.events.forEach(e => { if (prop.events.includes(e.id)) e.status = "resolved"; });
         g.checklist = {};                        // mod's collected-actions ticks reset each phase
-        ph.report = prop;
+        ph.report = this.mergeReport(ph.liveReport, prop);
+        ph.liveReport = null;
         ph.committed = true;
         ph.committedAt = new Date().toISOString();
       });
