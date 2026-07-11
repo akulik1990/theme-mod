@@ -899,9 +899,24 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 
 /* ---------- baked vocabulary (code, not JSON) ---------- */
 
-const ICON_POOL = ("⚔️ 🗡️ 🏹 💣 🔫 🧨 ☠️ 💀 🩸 🔥 ❄️ ⚡ 🌟 ✨ 🌙 ☀️ " +
-  "🛡️ 🦺 ➕ ❤️ 💔 🔗 ⛓️ 🎯 🎭 👁️ 🔍 🔮 📜 🗝️ 🔒 🔓 " +
-  "🐺 🦅 🐍 🦂 🕷️ 🌱 🍃 💠 🔵 🔴 🟢 🟡 🟣 ⚫ ⚪ 🔢").split(" ");
+/* grouped by social-deduction archetype: markers → kill power (mafioso, vigilante,
+   bomber) → deaths (janitor, mortician) → protection (doctor, bodyguard, guardian
+   angel) → investigation (cop, tracker, watcher, spy) → control (jailor, roleblocker,
+   blackmailer, silencer) → town (mayor, judge, marshal, mason) → deception (framer,
+   jester, disguiser, forger) → supernatural (werewolf, vampire, witch, medium,
+   necromancer) → mechanics (arsonist, poisoner, cupid, trapper, drunk, RNG) */
+const ICON_POOL = (
+  "1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪ " +
+  "🔪 🔫 ⚔️ 🗡️ 🏹 💣 🧨 " +
+  "💀 ☠️ ⚰️ 🪦 🩸 " +
+  "🛡️ 🦺 ➕ 💉 ❤️ 😇 " +
+  "🔍 🕵️ 👁️ 👣 📡 " +
+  "⛓️ 🔒 🗝️ 🚫 🤐 🤫 💤 " +
+  "🗳️ 📣 👑 ⚖️ 🎖️ 🤝 " +
+  "🎭 🃏 🤡 🪞 ✍️ " +
+  "🐺 🧛 🦇 🧙 🔮 👻 🧟 😈 " +
+  "🔥 ⚡ ❄️ 🌙 ☀️ 🧪 💘 💔 🔗 🎲 🪤 💰 " +
+  "📜 ✉️ ❓ 🔢 🎯 🛠️ 🌱").split(" ");
 
 const STD_ACTIONS = [
   { key:"roleblock",   label:"Roleblock" },
