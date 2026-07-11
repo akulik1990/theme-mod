@@ -819,13 +819,13 @@ const STD_ACTIONS = [
   { key:"redirect",    label:"Redirect" },          // opts: mode "by"|"at", to
   { key:"strip",       label:"Strip protection" },
   { key:"invuln",      label:"Grant invulnerability" }, // opts: duration
+  { key:"grant",       label:"Grant item / flag" }, // opts: item = "item:key"|"citem:name"|"flag:key"|"cflag:name"; engine-aware grants apply same phase
   { key:"bodyguard",   label:"Bodyguard" },
   { key:"save",        label:"Save" },
   { key:"mafiakill",   label:"Mafia KP" },          // faction kill; same resolution as kill
   { key:"kill",        label:"Deliver KP" },        // opts: penetrating, useGun
   { key:"lynch",       label:"Lynch" },             // day mechanic; only invulnerability saves
   { key:"investigate", label:"Investigate" },       // opts: read "alignment"|"category"
-  { key:"grant",       label:"Grant item / flag" }, // opts: item = "item:key"|"citem:name"|"flag:key"|"cflag:name"
 ];
 /* roleblock + redirect are a simultaneous control step, always first — not orderable.
    Roleblock takes priority: a redirect whose actor is a declared block target is
@@ -1090,6 +1090,15 @@ const app = createApp({
       DEFAULT_PRIORITY.forEach(k => {
         if (!keep.includes(k)) keep.splice(Math.min(DEFAULT_PRIORITY.indexOf(k), keep.length), 0, k);
       });
+      /* one-time: grant moved from last to its new high default position */
+      if (!p._grantV2) {
+        const gi = keep.indexOf("grant");
+        if (gi !== -1) {
+          keep.splice(gi, 1);
+          keep.splice(Math.min(DEFAULT_PRIORITY.indexOf("grant"), keep.length), 0, "grant");
+        }
+        p._grantV2 = true;
+      }
       p.priority = keep;
     },
     dealableCount(p) { return p.characters.filter(c => c.name && this.isDealable(c)).length; },
@@ -1567,11 +1576,6 @@ const app = createApp({
         if (CONTROL_ACTIONS.includes(e.action)) return -1;     // control step: always first
         const ci = charPrio(e.actor);
         if (ci !== -1) return ci;
-        /* granting the invulnerability flag resolves at the invuln tier, not the grant tier */
-        if (e.action === "grant" && e.opts && e.opts.item === "flag:invuln") {
-          const iv = order.indexOf("invuln");
-          if (iv !== -1) return iv;
-        }
         if (e.action.startsWith("c:")) return 99;              // custom: log-only, last
         const i = order.indexOf(e.action);
         return i === -1 ? 99 : i;
@@ -1774,8 +1778,14 @@ const app = createApp({
             break;
           }
           case "grant":
-            /* invuln flag grants protect immediately (resolved at the invuln tier) */
-            if (e.opts.item === "flag:invuln" && !wT.stripped) wT.invuln = true;
+            /* engine-aware grants take effect this phase (grant sits high in the default
+               order): invuln protects, vest/save absorb; commit adds the item, and a
+               same-phase absorb then consumes it — net zero, correct */
+            if (!wT.stripped) {
+              if (e.opts.item === "flag:invuln") wT.invuln = true;
+              if (e.opts.item === "item:vest") wT.protections.push({ type: "vest", fromInventory: true });
+              if (e.opts.item === "item:save") wT.protections.push({ type: "save", fromInventory: true });
+            }
             prop.grants.push({ target: t, ref: e.opts.item, duration: e.opts.grantDur || null });
             break;
         }
@@ -1791,13 +1801,20 @@ const app = createApp({
       for (const c of prop.checks) for (const part of c.parts || []) {
         if (!part.pending) continue;
         delete part.pending;
-        const raw = part.label === "watch"
+        const isWatch = part.label === "watch";
+        const raw = isWatch
           ? visits.filter(v => v.target === c.target && v.actor !== c.actor && v.actor !== c.target).map(v => v.actor)
           : visits.filter(v => v.actor === c.target && v.target !== c.target).map(v => v.target);
         const truth = [...new Set(raw)];
-        const shown = [...new Set(raw.map(trackMask).filter(Boolean))];
-        part.label = part.label === "watch" ? "visited by" : "visited";
-        part.shown = shown.join(", ") || "no one";
+        let shown = [...new Set(raw.map(trackMask).filter(Boolean))].join(", ") || "no one";
+        /* tracking a track-disguised player: their trail shows the decoy (or nothing) */
+        if (!isWatch) {
+          const tp = this.byName(c.target);
+          const tdg = tp && tp.flags.find(f => f.key === "disguised" && f.param && f.param.as === "track");
+          if (tdg) shown = tdg.param.value || "no one";
+        }
+        part.label = isWatch ? "visited by" : "visited";
+        part.shown = shown;
         part.truth = truth.join(", ") || "no one";
       }
       return prop;
@@ -1839,16 +1856,8 @@ const app = createApp({
             : (d.penetrating ? "penetrating " : "") + "KP from " + d.by
               + (d.guarding ? " (guarding " + d.guarding + ")" : "");
         });
-        prop.protUses.filter(u => u.fromInventory).forEach(u => {
-          const pl = this.byName(u.player);
-          const i = pl ? pl.inventory.findIndex(it => it.key === u.type) : -1;
-          if (i !== -1) pl.inventory.splice(i, 1);
-        });
-        (prop.itemUses || []).forEach(u => {
-          const pl = this.byName(u.player);
-          const i = pl ? pl.inventory.findIndex(it => it.key === u.key) : -1;
-          if (i !== -1) pl.inventory.splice(i, 1);
-        });
+        /* grants land BEFORE consumption, so an item granted and burned in the
+           same phase nets to zero instead of surviving */
         prop.grants.forEach(gr => {
           const pl = this.byName(gr.target);
           if (!pl) return;
@@ -1871,6 +1880,16 @@ const app = createApp({
             const d = g.preset.customFlags.find(x => x.name === key);
             if (d) pl.flags.push({ key: "custom", icon: d.icon, name: d.name, description: d.description, custom: true, duration: gr.duration ?? null });
           }
+        });
+        prop.protUses.filter(u => u.fromInventory).forEach(u => {
+          const pl = this.byName(u.player);
+          const i = pl ? pl.inventory.findIndex(it => it.key === u.type) : -1;
+          if (i !== -1) pl.inventory.splice(i, 1);
+        });
+        (prop.itemUses || []).forEach(u => {
+          const pl = this.byName(u.player);
+          const i = pl ? pl.inventory.findIndex(it => it.key === u.key) : -1;
+          if (i !== -1) pl.inventory.splice(i, 1);
         });
         prop.marks.forEach(mk => {
           const pl = this.byName(mk.target);
