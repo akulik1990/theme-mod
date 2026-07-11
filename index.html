@@ -43,11 +43,16 @@ label{color:var(--dim);font-size:12px}
 .syncbtn.starting .dot,.syncbtn.connecting .dot{background:var(--third)}
 .syncbtn.dropped .dot,.syncbtn.error .dot{background:var(--bad)}
 .synccode{font:600 18px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:var(--acc)}
-.helpbtn{border-radius:50%;width:26px;height:26px;padding:0;font-weight:700;color:var(--acc)}
-.modal.help{max-height:84vh;overflow-y:auto}
-.modal.help h3{margin:14px 0 4px;font-size:13px;color:var(--acc);text-transform:none;letter-spacing:.02em}
-.modal.help p{margin:0;color:var(--text);font-size:13px;line-height:1.55}
-.modal.help b{color:var(--acc2)}
+.helpbtn{border-radius:50%;width:26px;height:26px;padding:0}
+.guide-ov{position:fixed;inset:0;z-index:90}
+.gspot{position:fixed;border-radius:8px;box-shadow:0 0 0 9999px rgba(6,8,12,.82);border:2px solid var(--acc);
+  pointer-events:none;transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease}
+.gtip{position:fixed;z-index:92;width:320px;max-width:92vw;background:var(--panel);border:1px solid var(--acc);
+  border-radius:10px;padding:14px;box-shadow:0 10px 34px rgba(0,0,0,.55)}
+.gtip h3{margin:0 0 6px;font-size:14px;color:var(--acc)}
+.gtip p{margin:0 0 12px;font-size:13px;line-height:1.5;white-space:pre-line}
+.gnav{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.gstep{font-size:11px;color:var(--dim)}
 .statbar{display:flex;align-items:center;gap:16px;margin-right:14px}
 .statbar .stat{display:flex;flex-direction:column;align-items:center;line-height:1.2}
 .statbar .stat label{font-size:10px;text-transform:uppercase;letter-spacing:.08em}
@@ -181,62 +186,23 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     :title="ui.sync.err || 'co-mod session'">
     <span class="dot"></span>{{ syncBadge() || 'co-mod' }}
   </button>
-  <button class="mini helpbtn" :class="{on:ui.help}" @click="ui.help=!ui.help" title="guide for this tab">?</button>
+  <button class="mini helpbtn" @click="tourStart" title="guided tour of this tab">❓</button>
 </header>
 
-<!-- contextual help -->
-<div v-if="ui.help" class="overlay" @click.self="ui.help=false">
-  <div class="modal help" style="width:640px">
-    <div class="spread">
-      <h2>{{ ({presets:'Presets — building a theme', setup:'New game — the deal', game:'Running the game', data:'Data — save, resume, export'})[route] }}</h2>
-      <button class="mini ghost" @click="ui.help=false">✕ close</button>
+<!-- guided tour: spotlight walks the actual UI, tip explains each area -->
+<div v-if="ui.tour.on" class="guide-ov" @click.self="tourNext">
+  <div class="gspot" :style="ui.tour.spot"></div>
+  <div class="gtip" :style="ui.tour.tip" v-show="ui.tour.title">
+    <h3>{{ ui.tour.title }}</h3>
+    <p>{{ ui.tour.body }}</p>
+    <div class="gnav">
+      <span class="gstep">{{ ui.tour.i + 1 }} / {{ ui.tour.total }}</span>
+      <span class="row" style="gap:4px">
+        <button class="mini" @click="tourPrev" :disabled="ui.tour.i===0">Back</button>
+        <button class="mini primary" @click="tourNext">{{ ui.tour.i >= ui.tour.total - 1 ? 'Done' : 'Next' }}</button>
+        <button class="mini ghost" @click="tourEnd">Skip</button>
+      </span>
     </div>
-
-    <template v-if="route==='presets'">
-      <h3>The preset is a file</h3>
-      <p>One working copy lives in this browser; the real storage is the exported JSON. <b>Download</b> after big edits and keep the file with the game's spreadsheet. <b>Import JSON…</b> loads one back; <b>New</b> starts clean.</p>
-      <h3>Characters</h3>
-      <p>Status <b>active</b> = in the deal; <b>unused</b> = kept for reference, never dealt, but can be swapped in manually on the review screen. The ✎ row holds abilities, comments, and <b>starts with</b> — items/flags every player of this character begins the game holding (e.g. a vest, a Zoom flag).</p>
-      <h3>Importing from Sheets</h3>
-      <p>Select the columns in Sheets including the header row, copy, paste into the import box — it parses on paste. Each column shows the field it fills; fix a wrong guess in its dropdown, (skip) columns are ignored. Several columns can feed <b>abilities</b>; they concatenate.</p>
-      <h3>Custom vocabulary</h3>
-      <p><b>Custom actions</b> are log-only: they appear in the event form and the output, but the engine never resolves them — the mod applies effects by hand. <b>Custom items/flags</b> are trackable markers with an icon. New ones can also be created mid-game; they register on the game automatically.</p>
-      <h3>Action priority</h3>
-      <p>Resolution order for night / end-of-phase batches, top first. <b>Roleblock + Redirect always resolve first</b> as one simultaneous step: roleblock wins (a blocked redirector's redirect is cancelled), surviving redirects retarget everything including blocks. A <b>character</b> added to the list pulls all their actions to that position and powers through roleblocks.</p>
-    </template>
-
-    <template v-if="route==='setup'">
-      <h3>The deal</h3>
-      <p>Paste player names (one per line or commas), <b>Shuffle</b> assigns active characters randomly (crypto RNG). Review the table: picking a character someone else holds swaps the two players. <b>Re-shuffle</b> rerolls everything.</p>
-      <h3>Roll exports</h3>
-      <p><b>Copy roll</b> saves the final assignment as JSON — share it with a co-mod or keep it as backup. <b>Import roll…</b> restores one instead of shuffling.</p>
-      <h3>Starting</h3>
-      <p><b>Start game</b> snapshots the preset into the game (later preset edits don't touch the running game), gives every player their character's start items/flags, and opens N0. Starting replaces any current game — export it first from Data if it matters.</p>
-    </template>
-
-    <template v-if="route==='game'">
-      <h3>Roster</h3>
-      <p>Click a player to edit everything: identity (covers role steal), alive/dead with cause, inventory and flags. Icons show items then flags; hover for details. The checkbox column is your action-collection checklist — it clears on each commit. ⚙ toggles columns; group/sort organises the list (your view only, never synced).</p>
-      <h3>Events</h3>
-      <p>Log actions as actor / action / target. <b>Faction actors</b> (Mafia KP, Lynch) sit at the top of the actor list. Standard actions resolve automatically; <b>custom actions are marked manual</b> — you apply their effect via the player modal. When the actor holds a matching item (gun/save/cop check) a <b>consumes</b> toggle appears, pre-checked — untick for innate abilities.</p>
-      <h3>Day vs night</h3>
-      <p><b>Day runs live, first come first serve</b>: an immediate event applies the moment you log it (deaths, counters), gets an <b>applied</b> badge, and its effects carry into everything logged after — an earlier block stops later actions, an earlier redirect bends them. A mistake? <b>Reset D#</b> undoes the whole day. <b>Night collects</b> pending events and resolves them together at <b>Mark resolved</b>, in priority order. <b>End of phase</b> events are a second pass after the main batch — an EOD save blocks an EOD KP.</p>
-      <h3>Delays & landing</h3>
-      <p>“Next day / next night” events travel forward and surface in the <b>Landing this phase</b> panel of the phase they hit — with a warning if their actor died meanwhile. They resolve with that phase's batch.</p>
-      <h3>Resolution rules (baked)</h3>
-      <p>Kill precedence: <b>invulnerable</b> beats everything (strip-proof) → <b>penetrating</b> kills through vests/saves → a <b>protection</b> absorbs one hit → death. A <b>bodyguard</b> takes the hit instead, then resolves against his own defences. <b>Strip</b> clears vests/saves only. Mark resolved shows the proposed outcome first — nothing touches state until you commit; <b>Un-resolve</b> reopens the latest committed phase.</p>
-      <h3>Co-mod</h3>
-      <p>The co-mod button hosts a session (share the 6-letter code on voice) or joins one — <b>joining adopts the host's state</b>. Everyone edits; the host's copy is authority. If the host drops, any guest can <b>Take over</b> with their local copy and share a new code. Mods should be on wifi/home networks — mobile data often can't connect.</p>
-    </template>
-
-    <template v-if="route==='data'">
-      <h3>Game JSON</h3>
-      <p>The whole game — players, phases, events, activity — is one document. <b>Copy / Download</b> it for backup or to hand to another mod; <b>Import</b> resumes it exactly where it was. Everything also autosaves to this browser on every change, so a crash or refresh loses nothing.</p>
-      <h3>Full export</h3>
-      <p>The Discord-ready summary: winner call (type it manually — the app never decides), player list, reveal, and every committed phase's block. Per-phase blocks are also on each phase tab.</p>
-      <h3>Activity</h3>
-      <p>Every operation with who did it and when — the audit trail when two mods disagree about what happened.</p>
-    </template>
   </div>
 </div>
 
@@ -293,7 +259,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 
   <section v-if="route==='presets'" class="viewwrap">
     <!-- PRESETS -->
-    <div class="card">
+    <div class="card" id="g-preset">
       <div class="spread">
         <h2>Preset</h2>
         <div class="row">
@@ -315,7 +281,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     </div>
 
     <template v-if="preset">
-    <div class="card">
+    <div class="card" id="g-chars">
       <div class="spread">
         <h2>Characters <span class="dim small">{{ dealableCount(preset) }} in deal / {{ preset.characters.length }} total</span></h2>
         <button @click="addCharacter">+ character</button>
@@ -368,7 +334,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </table>
     </div>
 
-    <div class="card">
+    <div class="card" id="g-tsv">
       <h2>Import characters <span class="dim small">paste straight from Google Sheets</span></h2>
       <textarea v-model="ui.tsvText" rows="3" @input="tsvParse"
         placeholder="In Sheets, select the character columns INCLUDING the header row, copy, and paste here. Parsing is automatic."></textarea>
@@ -402,7 +368,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </template>
     </div>
 
-    <div class="card">
+    <div class="card" id="g-lists">
       <h2>Lists</h2>
       <h3>Categories <span class="dim small">icon shows in the roster</span></h3>
       <div>
@@ -425,7 +391,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="g-vocab">
       <h2>Custom vocabulary <span class="dim small">log-only; the engine never resolves these</span></h2>
       <h3>Actions</h3>
       <div class="row" v-for="(a,i) in preset.customActions" style="margin-bottom:4px">
@@ -452,7 +418,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       <button class="mini" @click="preset.customFlags.push({icon:'🎯',name:'',description:''})">+ flag</button>
     </div>
 
-    <div class="card">
+    <div class="card" id="g-prio">
       <h2>Action priority <span class="dim small">resolution order, top first</span></h2>
       <div class="row" style="margin-bottom:4px">
         <span class="dim small" style="width:20px;text-align:right">0</span>
@@ -479,7 +445,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 
   <section v-if="route==='setup'" class="viewwrap">
     <!-- SETUP -->
-    <div class="card">
+    <div class="card" id="g-setup">
       <h2>New game</h2>
       <div class="row">
         <label>preset</label>
@@ -496,7 +462,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </div>
     </div>
 
-    <div class="card" v-if="ui.assign">
+    <div class="card" id="g-review" v-if="ui.assign">
       <h2>Review deal <span class="dim small">pick a taken character to swap the two players</span></h2>
       <table>
         <tr><th>#</th><th>player</th><th>character</th><th>alignment</th><th>category</th></tr>
@@ -527,7 +493,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     <div v-else class="gamewrap" :class="{withnotes: view.show.notes}">
 
       <div class="rostercol">
-        <div class="card">
+        <div class="card" id="g-roster">
           <div class="spread">
             <h2>Roster <span class="dim small">{{ aliveCount }} / {{ game.players.length }} alive</span></h2>
             <button class="mini ghost" @click="ui.rosterMenu=!ui.rosterMenu" title="display options">⚙</button>
@@ -611,7 +577,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           <button class="ghost" @click="addPhase(nextPhase.type)" title="N0 → D1 → N1 → D2 …">+ {{ nextPhase.name }}</button>
         </div>
 
-        <div class="card" v-if="activePhase">
+        <div class="card" id="g-phase" v-if="activePhase">
           <div class="spread">
             <h2>{{ activePhase.name }} <span class="dim small">{{ activePhase.type }}</span></h2>
             <span class="committed-note" v-if="activePhase.committed">committed — read-only</span>
@@ -744,7 +710,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           </div>
 
           <!-- RESOLVE -->
-          <div class="row" style="margin-top:14px" v-if="!activePhase.committed">
+          <div class="row" id="g-resolve" style="margin-top:14px" v-if="!activePhase.committed">
             <button class="primary" @click="proposeResolve">Mark resolved…</button>
             <button v-if="activePhase.snapshot" class="ghost danger" @click="resetPhase"
               title="undo live-applied actions, back to phase start">Reset {{ activePhase.name }}</button>
@@ -915,14 +881,14 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   </section>
 
   <section v-if="route==='data'" class="viewwrap">
-    <div class="card">
+    <div class="card" id="g-dexport">
       <h2>Export game</h2>
       <div class="row">
         <button @click="copyBtn($event, JSON.stringify(game, null, 2))" :disabled="!game">Copy game JSON</button>
         <button @click="downloadJson('game')" :disabled="!game">Download game</button>
       </div>
     </div>
-    <div class="card" v-if="game">
+    <div class="card" id="g-dfull" v-if="game">
       <h2>Full export</h2>
       <div class="row">
         <input v-model="game.winner" placeholder="winner (manual call)" style="width:160px">
@@ -930,7 +896,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
       </div>
       <pre class="paste" style="margin-top:8px">{{ fullText() }}</pre>
     </div>
-    <div class="card">
+    <div class="card" id="g-dimport">
       <h2>Import</h2>
       <p class="dim small">Paste a game JSON to resume it. A pasted preset JSON is loaded into the Presets tab.</p>
       <textarea v-model="ui.importText" rows="8" placeholder='{"players":[...], "phases":[...]}'></textarea>
@@ -939,7 +905,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <span class="msg" :class="{err:ui.importErr}" v-if="ui.importMsg">{{ ui.importMsg }}</span>
       </div>
     </div>
-    <div class="card" v-if="game">
+    <div class="card" id="g-dactivity" v-if="game">
       <h2>Activity</h2>
       <table><tr v-for="a in game.activity.slice().reverse().slice(0,40)">
         <td class="dim small" style="white-space:nowrap">{{ a.at.slice(5,16).replace("T"," ") }}</td>
@@ -1024,6 +990,59 @@ const STD_FLAGS = [
   { key:"disguised",   icon:"🎭", name:"Disguised",    description:"Checks return the disguise, not the truth." },
   { key:"stacks",      icon:"🔢", name:"Stacks",       description:"Numeric counter." },
 ];
+
+/* ---------- guided tour (per tab, spotlight style — ported from Mafia Tracker) ---------- */
+
+const GUIDES = {
+  presets: [
+    { sel: "#g-preset", title: "The preset is a file",
+      body: "One working copy lives in this browser; the real storage is the exported JSON. Download after big edits and keep the file next to the game's spreadsheet. Import loads one back, New starts clean. A running game is not affected by later preset edits — it carries its own snapshot." },
+    { sel: "#g-chars", title: "Characters",
+      body: "Status active = in the deal; unused = kept for reference, never dealt, but still swappable-in manually on the review screen. The ✎ row opens abilities, comments, and “starts with” — items/flags every player of this character begins the game holding (a vest, a Zoom flag…)." },
+    { sel: "#g-tsv", title: "Import from Sheets",
+      body: "Select the columns in Sheets INCLUDING the header row, copy, paste here — it parses automatically. Every column shows the field it fills; fix a wrong guess in its dropdown, (skip) columns are ignored. Several columns can feed abilities; they concatenate." },
+    { sel: "#g-lists", title: "Categories & alignments",
+      body: "The category icon shows next to each player in the roster. Alignment shorthand and colour drive the roster chips and the stat strip — set them per theme." },
+    { sel: "#g-vocab", title: "Custom vocabulary",
+      body: "Custom actions are log-only: they appear in the event form and the output, but the engine never resolves them — you apply the effect by hand (they're badged “manual”). Custom items/flags are trackable markers. Anything created mid-game registers here automatically." },
+    { sel: "#g-prio", title: "Action priority",
+      body: "Resolution order for night and end-of-phase batches, top first. Roleblock + Redirect always resolve first as one simultaneous step — roleblock wins: a blocked redirector's redirect is cancelled, surviving redirects retarget everything, blocks included. A character added here pulls ALL their actions to that position and powers through roleblocks." },
+  ],
+  setup: [
+    { sel: "#g-setup", title: "The deal",
+      body: "Paste player names (one per line or commas). Shuffle assigns active characters randomly — crypto RNG, like Night Desk. Import roll… restores a previously copied deal instead of rolling." },
+    { sel: "#g-review", title: "Review before starting",
+      body: "Pick a character someone else holds to swap the two players; unused characters can be swapped in here too. Copy roll saves the assignment as JSON for a co-mod or backup. Start game snapshots the preset, hands out start items/flags, opens N0 — and replaces any current game." },
+  ],
+  game: [
+    { sel: ".statbar", title: "Live counters",
+      body: "Alive per alignment, total, lynch majority, current phase — day actions move them instantly. The filter narrows every count to players holding one flag (e.g. just Zoom 1)." },
+    { sel: "#g-roster", title: "Roster",
+      body: "Click a player to edit everything: identity (covers role steal), alive/dead with cause, items, flags. Icons = items then flags; hover for details. The checkbox is your action-collection tick — it clears on every commit. ⚙ toggles columns and clears a flag from everyone." },
+    { sel: ".gctl", title: "Sort & group",
+      body: "Stack sort keys, then add groupings by flag / item / alignment / category — their order is the nesting. Click a group header to fold it. This is your view only; a co-mod's roster stays their own." },
+    { sel: ".tabs", title: "Phases",
+      body: "One tab per phase; + adds the next in N0 → D1 → N1 order. ✓ means committed (read-only until un-resolved)." },
+    { sel: ".landing", title: "Landing this phase",
+      body: "Delayed events (“next day / next night”) surface here in the phase they hit — with a warning if their actor died on the way. They resolve with this phase's batch." },
+    { sel: "#g-phase", title: "Events — day vs night",
+      body: "Log actor / action / target / when. DAY runs live, first come first serve: an immediate event applies the moment you log it and its effects carry into everything after — an earlier block stops later actions. NIGHT collects and resolves everything together at Mark resolved, in priority order. End-of-phase events are a second pass — an EOD save blocks an EOD KP. Consume toggles appear when the actor holds a gun / save / cop check; untick for innate abilities." },
+    { sel: "#g-resolve", title: "Resolve & undo",
+      body: "Mark resolved shows the proposed outcome — deaths, checks, consumption — and nothing touches state until you commit. Kill precedence: invulnerable beats all (strip-proof) → penetrating beats vests/saves → one protection absorbs → death; a bodyguard takes the hit instead. Un-resolve reopens the latest committed phase; Reset undoes live day actions." },
+    { sel: ".syncbtn", title: "Co-mod",
+      body: "Host a session and say the 6-letter code on voice; joining adopts the host's game state. Everyone edits, the host's copy wins conflicts, every peer keeps a full local copy — if the host drops, any guest can Take over and share a new code. Use wifi; mobile data often can't connect." },
+  ],
+  data: [
+    { sel: "#g-dexport", title: "Backups",
+      body: "The whole game is one JSON document — copy or download it any time. Everything also autosaves to this browser on every change, so a crash or refresh loses nothing." },
+    { sel: "#g-dfull", title: "Full export",
+      body: "The Discord-ready summary: winner (your manual call — the app never decides), player list, reveal, and every committed phase's block." },
+    { sel: "#g-dimport", title: "Import",
+      body: "Paste a game JSON to resume it exactly where it was — the co-mod handoff when not using a live session. A preset pasted here loads into the Presets tab instead." },
+    { sel: "#g-dactivity", title: "Activity",
+      body: "Every operation with who did it and when — the audit trail for two-mod disagreements." },
+  ],
+};
 
 /* ---------- helpers ---------- */
 
@@ -1279,7 +1298,8 @@ const app = createApp({
         itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false,
-        rosterMenu: false, statFlag: "", help: false,
+        rosterMenu: false, statFlag: "",
+        tour: { on: false, i: 0, total: 0, title: "", body: "", spot: {}, tip: {} },
         sync: { open: false, role: "solo", status: "off", code: "", joinCode: "",
                 err: "", peers: [], lastSync: "" },
       },
@@ -2453,6 +2473,49 @@ const app = createApp({
       return out.join("\n").trim();
     },
 
+    /* ----- guided tour ----- */
+    tourVisible() {
+      return (GUIDES[this.route] || []).filter(st => {
+        const el = document.querySelector(st.sel);
+        return el && el.offsetParent !== null;
+      });
+    },
+    tourStart() {
+      this.ui.tour.on = true;
+      this.ui.tour.i = 0;
+      this.tourShow();
+    },
+    tourEnd() { this.ui.tour.on = false; this.ui.tour.title = ""; },
+    tourNext() {
+      if (this.ui.tour.i < this.tourVisible().length - 1) { this.ui.tour.i++; this.tourShow(); }
+      else this.tourEnd();
+    },
+    tourPrev() { if (this.ui.tour.i > 0) { this.ui.tour.i--; this.tourShow(); } },
+    tourShow() {
+      const t = this.ui.tour;
+      const steps = this.tourVisible();
+      t.total = steps.length;
+      const st = steps[t.i];
+      if (!st) { this.tourEnd(); return; }
+      const el = document.querySelector(st.sel);
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      t.title = "";                                  // hide the tip while the page settles
+      setTimeout(() => {
+        const r = el.getBoundingClientRect(), pad = 6;
+        t.spot = { left: (r.left - pad) + "px", top: (r.top - pad) + "px",
+          width: (r.width + pad * 2) + "px", height: (r.height + pad * 2) + "px" };
+        t.title = st.title; t.body = st.body;
+        this.$nextTick(() => {
+          const tip = document.querySelector(".gtip");
+          const w = (tip && tip.offsetWidth) || 320, h = (tip && tip.offsetHeight) || 160;
+          let top = r.bottom + 12;
+          if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 12);
+          const left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+          t.tip = { top: top + "px", left: left + "px" };
+        });
+      }, 240);
+    },
+
     /* ----- co-mod session controls ----- */
     syncHost() {
       SYNC.host();
@@ -2524,6 +2587,7 @@ const app = createApp({
     game:    { deep: true, handler: debounce(function () { this.persistGame(); SYNC.send(this.game, true); }, 250) },
     view:    { deep: true, handler: debounce(function () { lsSave(LS.view, this.view); }, 250) },
     modName() { localStorage.setItem(LS.mod, this.modName); },
+    route() { if (this.ui.tour.on) this.tourEnd(); },
   },
 
   mounted() {
