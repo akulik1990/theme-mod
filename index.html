@@ -1796,12 +1796,16 @@ const app = createApp({
         return pl ? order.indexOf("char:" + pl.character) : -1;
       };
       const pos = e => {
-        if (CONTROL_ACTIONS.includes(e.action)) return -1;     // control step: always first
+        /* end-of-phase events form a second pass: everything else (kills included)
+           settles first, then the end bucket resolves in the same priority order
+           with its own kill resolution — an EOD save blocks an EOD KP */
+        const endShift = e.timeframe === "end" ? 500 : 0;
+        if (CONTROL_ACTIONS.includes(e.action)) return endShift - 1;
         const ci = charPrio(e.actor);
-        if (ci !== -1) return ci;
-        if (e.action.startsWith("c:")) return 99;              // custom: log-only, last
+        if (ci !== -1) return endShift + ci;
+        if (e.action.startsWith("c:")) return endShift + 99;   // custom: log-only, last
         const i = order.indexOf(e.action);
-        return i === -1 ? 99 : i;
+        return endShift + (i === -1 ? 99 : i);
       };
       const evs = g.events.filter(e => e.status === "pending" && this.landsOnId(e) === ph.id);
       const sorted = evs.map((e, i) => ({ e, i }))
@@ -1823,12 +1827,13 @@ const app = createApp({
         /* full activity for the discord block — every event incl. control + custom */
         eventLines: sorted.map(e => {
           const o = this.optsSummary(e);
-          return this.evLine(e) + (o ? ` (${o})` : "") + (e.note ? " — " + e.note : "");
+          return this.evLine(e) + (o ? ` (${o})` : "")
+            + (e.timeframe === "end" ? " [end of phase]" : "") + (e.note ? " — " + e.note : "");
         }) };
       const dead = new Set(g.players.filter(p => !p.alive).map(p => p.name));
       const diedNow = new Set();
       const killPos = Math.max(order.indexOf("kill"), order.indexOf("mafiakill"));
-      let killsDone = false;
+      let killsDone = false, endKillsDone = false;
       const visits = [];   // {actor, target} of every action that went through — feeds watch/track
 
       /* what an investigation sees for a dimension, disguise applied — a player can
@@ -1933,6 +1938,7 @@ const app = createApp({
         const p = pos(e);
         if (e.action === "redirect") continue;                 // applied in the control pre-pass
         if (!killsDone && p > killPos) resolveKills();
+        if (!endKillsDone && p > 500 + killPos) { endKillsDone = true; resolveKills(); }
         if (e.action.startsWith("c:") || p === 99) {           // custom / unknown: log-only
           prop.logs.push({ actor: e.actor, text: this.evLine(e) + (e.note ? " — " + e.note : "") });
           if (e.target) visits.push({ actor: e.actor, target: e.target });
