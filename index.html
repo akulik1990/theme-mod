@@ -529,12 +529,6 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                   <option v-for="p in rosterFlat" :value="p.name">{{ p.name }}</option>
                 </select>
               </template>
-              <template v-if="ui.ev.action==='invuln'">
-                <label>duration</label>
-                <select v-model="ui.ev.opts.duration">
-                  <option v-for="n in [1,2,3]" :value="n">{{ n }} phase{{ n>1?'s':'' }}</option>
-                </select>
-              </template>
               <template v-if="ui.ev.action==='kill' || ui.ev.action==='mafiakill'">
                 <label><input type="checkbox" v-model="ui.ev.opts.penetrating"> penetrating</label>
                 <label v-if="actorHas('gun')"><input type="checkbox" v-model="ui.ev.opts.useGun"> consumes 🔫 gun</label>
@@ -631,11 +625,10 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
                 <span class="badge bad" v-if="c.actorDied">actor died this phase</span>
               </div>
             </template>
-            <template v-if="ui.proposal.grants.length || ui.proposal.marks.length || ui.proposal.invulns.length || ui.proposal.protUses.length || ui.proposal.itemUses.length">
+            <template v-if="ui.proposal.grants.length || ui.proposal.marks.length || ui.proposal.protUses.length || ui.proposal.itemUses.length">
               <h3>Inventory / flags</h3>
               <div v-for="x in ui.proposal.grants">➕ {{ x.target }} gets {{ (x.ref || x.item || '').split(':').pop() }}{{ x.duration ? ' ('+x.duration+'ph)' : '' }}</div>
               <div v-for="x in ui.proposal.marks">🎯 {{ x.target }} flagged {{ x.flag }}{{ x.duration ? ' ('+x.duration+'ph)' : '' }}</div>
-              <div v-for="x in ui.proposal.invulns">🛡️ {{ x.target }} invulnerable {{ x.duration }}ph</div>
               <div v-for="x in ui.proposal.protUses">
                 <template v-if="x.fromInventory">− {{ x.player }} consumes own {{ x.type }}</template>
                 <template v-else>{{ x.source || 'someone' }} saved {{ x.player }}</template>
@@ -818,10 +811,9 @@ const STD_ACTIONS = [
   { key:"roleblock",   label:"Roleblock" },
   { key:"redirect",    label:"Redirect" },          // opts: mode "by"|"at", to
   { key:"strip",       label:"Strip protection" },
-  { key:"invuln",      label:"Grant invulnerability" }, // opts: duration
-  { key:"grant",       label:"Grant item / flag" }, // opts: item = "item:key"|"citem:name"|"flag:key"|"cflag:name"; engine-aware grants apply same phase
   { key:"bodyguard",   label:"Bodyguard" },
   { key:"save",        label:"Save" },
+  { key:"grant",       label:"Grant item / flag" }, // opts: item = "item:key"|"citem:name"|"flag:key"|"cflag:name"; engine-aware grants apply same phase
   { key:"mafiakill",   label:"Mafia KP" },          // faction kill; same resolution as kill
   { key:"kill",        label:"Deliver KP" },        // opts: penetrating, useGun
   { key:"lynch",       label:"Lynch" },             // day mechanic; only invulnerability saves
@@ -1090,14 +1082,14 @@ const app = createApp({
       DEFAULT_PRIORITY.forEach(k => {
         if (!keep.includes(k)) keep.splice(Math.min(DEFAULT_PRIORITY.indexOf(k), keep.length), 0, k);
       });
-      /* one-time: grant moved from last to its new high default position */
-      if (!p._grantV2) {
+      /* one-time: grant absorbed invuln and settled after save, before kills */
+      if (!p._grantV3) {
         const gi = keep.indexOf("grant");
         if (gi !== -1) {
           keep.splice(gi, 1);
           keep.splice(Math.min(DEFAULT_PRIORITY.indexOf("grant"), keep.length), 0, "grant");
         }
-        p._grantV2 = true;
+        p._grantV3 = true;
       }
       p.priority = keep;
     },
@@ -1407,7 +1399,6 @@ const app = createApp({
     optsSummary(e) {
       const o = e.opts || {}, out = [];
       if (e.action === "redirect") out.push((o.mode === "at" ? "aimed-at" : "actions-by") + " → " + o.to);
-      if (e.action === "invuln") out.push(o.duration + "ph");
       if (e.action === "kill") { if (o.penetrating) out.push("penetrating"); if (o.useGun) out.push("gun"); }
       if (e.action === "save" && o.useSave) out.push("save item");
       if (e.action === "investigate") {
@@ -1596,7 +1587,7 @@ const app = createApp({
       });
 
       const prop = { phase: ph.name, deaths: [], saved: [], checks: [], grants: [], marks: [],
-        invulns: [], protUses: [], itemUses: [], logs: [], skipped: [], events: sorted.map(e => e.id),
+        protUses: [], itemUses: [], logs: [], skipped: [], events: sorted.map(e => e.id),
         /* full activity for the discord block — every event incl. control + custom */
         eventLines: sorted.map(e => {
           const o = this.optsSummary(e);
@@ -1698,10 +1689,6 @@ const app = createApp({
           case "strip":
             wT.stripped = true; wT.invuln = false; wT.protections = [];
             prop.marks.push({ target: t, flag: "stripped", duration: 1 });
-            break;
-          case "invuln":
-            if (!wT.stripped) { wT.invuln = true; prop.invulns.push({ target: t, duration: e.opts.duration || 1 }); }
-            else prop.skipped.push(this.evLine(e) + " — target stripped");
             break;
           case "bodyguard":
             wT.guards.push(e.actor);
@@ -1894,11 +1881,6 @@ const app = createApp({
         prop.marks.forEach(mk => {
           const pl = this.byName(mk.target);
           if (pl) pl.flags.push(this.flagInstFromMark(mk));
-        });
-        prop.invulns.forEach(iv => {
-          const pl = this.byName(iv.target);
-          const s = STD_FLAGS.find(x => x.key === "invuln");
-          if (pl) pl.flags.push({ key: s.key, icon: s.icon, name: s.name, description: s.description, custom: false, duration: iv.duration });
         });
         g.events.forEach(e => { if (prop.events.includes(e.id)) e.status = "resolved"; });
         g.checklist = {};                        // mod's collected-actions ticks reset each phase
