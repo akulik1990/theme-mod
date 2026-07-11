@@ -167,11 +167,17 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <button @click="syncJoin">Join</button>
         <span class="dim small">— adopts the host's game state</span>
       </div>
+      <h3>TURN relay <span class="dim">optional — needed when a mod is on mobile data / strict NAT</span></h3>
+      <input v-model="ui.sync.turnUrl" class="grow" style="width:100%"
+        placeholder="TURN credentials URL (e.g. from a free metered.ca account)">
+      <p class="dim small" style="margin:4px 0 0">Paste once on the host's machine; it is fetched when a
+        session starts and covers all peers. Stored locally, never synced.</p>
     </template>
 
     <template v-else>
       <div class="row">
         <span class="badge" :class="{warn: ui.sync.status!=='online'}">{{ ui.sync.role }} · {{ ui.sync.status }}</span>
+        <span class="badge" v-if="ui.sync.turnActive">TURN relay active</span>
         <span v-if="ui.sync.lastSync" class="dim small">last sync: {{ ui.sync.lastSync }}</span>
       </div>
       <template v-if="ui.sync.role==='host'">
@@ -969,7 +975,26 @@ const SYNC = {
   },
 
   persist() {
-    lsSave(LS.sync, { role: this.s.role, code: this.s.code, joinCode: this.s.joinCode });
+    lsSave(LS.sync, { role: this.s.role, code: this.s.code, joinCode: this.s.joinCode, turnUrl: this.s.turnUrl });
+  },
+
+  /* STUN alone fails on CGNAT (mobile data). A TURN relay fixes it; the credentials
+     URL is any endpoint returning [{urls,username,credential},…] or {iceServers:[…]}
+     (e.g. a free metered.ca account). Host-side TURN is enough for the pair. */
+  async iceConfig() {
+    const ice = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
+    this.s.turnActive = false;
+    const url = (this.s.turnUrl || "").trim();
+    if (url) {
+      try {
+        const j = await (await fetch(url)).json();
+        const extra = Array.isArray(j) ? j : (j.iceServers || []);
+        ice.push(...extra);
+        this.s.turnActive = extra.some(s => /turns?:/i.test(JSON.stringify(s.urls || "")));
+        if (!this.s.turnActive) this.s.err = "credentials URL returned no TURN servers";
+      } catch (e) { this.s.err = "TURN fetch failed — continuing without relay"; }
+    }
+    return { iceServers: ice };
   },
 
   async host(reuseCode) {
@@ -978,7 +1003,8 @@ const SYNC = {
       this.leave(true);
       const code = reuseCode || this.newCode();
       Object.assign(this.s, { role: "host", status: "starting", code, err: "", peers: [] });
-      const peer = new Peer(PEER_PREFIX + code.toLowerCase());
+      const config = await this.iceConfig();
+      const peer = new Peer(PEER_PREFIX + code.toLowerCase(), { config });
       this.peer = peer;
       peer.on("open", () => { this.s.status = "online"; this.persist(); });
       peer.on("disconnected", () => {      // lost the signaling server; existing conns survive
@@ -1031,7 +1057,8 @@ const SYNC = {
       this.leave(true);
       Object.assign(this.s, { role: "guest", status: "connecting", joinCode: code, err: "", peers: [] });
       this.persist();
-      const peer = new Peer();
+      const config = await this.iceConfig();
+      const peer = new Peer({ config });
       this.peer = peer;
       peer.on("error", err => {
         this.s.status = "error";
@@ -1153,7 +1180,7 @@ const app = createApp({
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false,
         rosterMenu: false, statFlag: "",
         sync: { open: false, role: "solo", status: "off", code: "", joinCode: "",
-                err: "", peers: [], lastSync: "" },
+                err: "", peers: [], lastSync: "", turnUrl: "", turnActive: false },
       },
     };
   },
@@ -2291,7 +2318,8 @@ const app = createApp({
     window.$vm = this;            // console access for debugging
     SYNC.init(this);
     const ss = lsLoad(LS.sync, null);        // prefill last session's codes; reconnecting stays manual
-    if (ss) { this.ui.sync.code = ss.code || ""; this.ui.sync.joinCode = ss.joinCode || ""; }
+    if (ss) { this.ui.sync.code = ss.code || ""; this.ui.sync.joinCode = ss.joinCode || "";
+              this.ui.sync.turnUrl = ss.turnUrl || ""; }
     /* one-time migration from the old multi-preset storage: keep the fullest one */
     if (!this.preset) {
       const legacy = lsLoad(LS.presetsLegacy, []);
