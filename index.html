@@ -43,6 +43,11 @@ label{color:var(--dim);font-size:12px}
 .syncbtn.starting .dot,.syncbtn.connecting .dot{background:var(--third)}
 .syncbtn.dropped .dot,.syncbtn.error .dot{background:var(--bad)}
 .synccode{font:600 18px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:var(--acc)}
+.helpbtn{border-radius:50%;width:26px;height:26px;padding:0;font-weight:700;color:var(--acc)}
+.modal.help{max-height:84vh;overflow-y:auto}
+.modal.help h3{margin:14px 0 4px;font-size:13px;color:var(--acc);text-transform:none;letter-spacing:.02em}
+.modal.help p{margin:0;color:var(--text);font-size:13px;line-height:1.55}
+.modal.help b{color:var(--acc2)}
 .statbar{display:flex;align-items:center;gap:16px;margin-right:14px}
 .statbar .stat{display:flex;flex-direction:column;align-items:center;line-height:1.2}
 .statbar .stat label{font-size:10px;text-transform:uppercase;letter-spacing:.08em}
@@ -176,7 +181,64 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     :title="ui.sync.err || 'co-mod session'">
     <span class="dot"></span>{{ syncBadge() || 'co-mod' }}
   </button>
+  <button class="mini helpbtn" :class="{on:ui.help}" @click="ui.help=!ui.help" title="guide for this tab">?</button>
 </header>
+
+<!-- contextual help -->
+<div v-if="ui.help" class="overlay" @click.self="ui.help=false">
+  <div class="modal help" style="width:640px">
+    <div class="spread">
+      <h2>{{ ({presets:'Presets — building a theme', setup:'New game — the deal', game:'Running the game', data:'Data — save, resume, export'})[route] }}</h2>
+      <button class="mini ghost" @click="ui.help=false">✕ close</button>
+    </div>
+
+    <template v-if="route==='presets'">
+      <h3>The preset is a file</h3>
+      <p>One working copy lives in this browser; the real storage is the exported JSON. <b>Download</b> after big edits and keep the file with the game's spreadsheet. <b>Import JSON…</b> loads one back; <b>New</b> starts clean.</p>
+      <h3>Characters</h3>
+      <p>Status <b>active</b> = in the deal; <b>unused</b> = kept for reference, never dealt, but can be swapped in manually on the review screen. The ✎ row holds abilities, comments, and <b>starts with</b> — items/flags every player of this character begins the game holding (e.g. a vest, a Zoom flag).</p>
+      <h3>Importing from Sheets</h3>
+      <p>Select the columns in Sheets including the header row, copy, paste into the import box — it parses on paste. Each column shows the field it fills; fix a wrong guess in its dropdown, (skip) columns are ignored. Several columns can feed <b>abilities</b>; they concatenate.</p>
+      <h3>Custom vocabulary</h3>
+      <p><b>Custom actions</b> are log-only: they appear in the event form and the output, but the engine never resolves them — the mod applies effects by hand. <b>Custom items/flags</b> are trackable markers with an icon. New ones can also be created mid-game; they register on the game automatically.</p>
+      <h3>Action priority</h3>
+      <p>Resolution order for night / end-of-phase batches, top first. <b>Roleblock + Redirect always resolve first</b> as one simultaneous step: roleblock wins (a blocked redirector's redirect is cancelled), surviving redirects retarget everything including blocks. A <b>character</b> added to the list pulls all their actions to that position and powers through roleblocks.</p>
+    </template>
+
+    <template v-if="route==='setup'">
+      <h3>The deal</h3>
+      <p>Paste player names (one per line or commas), <b>Shuffle</b> assigns active characters randomly (crypto RNG). Review the table: picking a character someone else holds swaps the two players. <b>Re-shuffle</b> rerolls everything.</p>
+      <h3>Roll exports</h3>
+      <p><b>Copy roll</b> saves the final assignment as JSON — share it with a co-mod or keep it as backup. <b>Import roll…</b> restores one instead of shuffling.</p>
+      <h3>Starting</h3>
+      <p><b>Start game</b> snapshots the preset into the game (later preset edits don't touch the running game), gives every player their character's start items/flags, and opens N0. Starting replaces any current game — export it first from Data if it matters.</p>
+    </template>
+
+    <template v-if="route==='game'">
+      <h3>Roster</h3>
+      <p>Click a player to edit everything: identity (covers role steal), alive/dead with cause, inventory and flags. Icons show items then flags; hover for details. The checkbox column is your action-collection checklist — it clears on each commit. ⚙ toggles columns; group/sort organises the list (your view only, never synced).</p>
+      <h3>Events</h3>
+      <p>Log actions as actor / action / target. <b>Faction actors</b> (Mafia KP, Lynch) sit at the top of the actor list. Standard actions resolve automatically; <b>custom actions are marked manual</b> — you apply their effect via the player modal. When the actor holds a matching item (gun/save/cop check) a <b>consumes</b> toggle appears, pre-checked — untick for innate abilities.</p>
+      <h3>Day vs night</h3>
+      <p><b>Day runs live, first come first serve</b>: an immediate event applies the moment you log it (deaths, counters), gets an <b>applied</b> badge, and its effects carry into everything logged after — an earlier block stops later actions, an earlier redirect bends them. A mistake? <b>Reset D#</b> undoes the whole day. <b>Night collects</b> pending events and resolves them together at <b>Mark resolved</b>, in priority order. <b>End of phase</b> events are a second pass after the main batch — an EOD save blocks an EOD KP.</p>
+      <h3>Delays & landing</h3>
+      <p>“Next day / next night” events travel forward and surface in the <b>Landing this phase</b> panel of the phase they hit — with a warning if their actor died meanwhile. They resolve with that phase's batch.</p>
+      <h3>Resolution rules (baked)</h3>
+      <p>Kill precedence: <b>invulnerable</b> beats everything (strip-proof) → <b>penetrating</b> kills through vests/saves → a <b>protection</b> absorbs one hit → death. A <b>bodyguard</b> takes the hit instead, then resolves against his own defences. <b>Strip</b> clears vests/saves only. Mark resolved shows the proposed outcome first — nothing touches state until you commit; <b>Un-resolve</b> reopens the latest committed phase.</p>
+      <h3>Co-mod</h3>
+      <p>The co-mod button hosts a session (share the 6-letter code on voice) or joins one — <b>joining adopts the host's state</b>. Everyone edits; the host's copy is authority. If the host drops, any guest can <b>Take over</b> with their local copy and share a new code. Mods should be on wifi/home networks — mobile data often can't connect.</p>
+    </template>
+
+    <template v-if="route==='data'">
+      <h3>Game JSON</h3>
+      <p>The whole game — players, phases, events, activity — is one document. <b>Copy / Download</b> it for backup or to hand to another mod; <b>Import</b> resumes it exactly where it was. Everything also autosaves to this browser on every change, so a crash or refresh loses nothing.</p>
+      <h3>Full export</h3>
+      <p>The Discord-ready summary: winner call (type it manually — the app never decides), player list, reveal, and every committed phase's block. Per-phase blocks are also on each phase tab.</p>
+      <h3>Activity</h3>
+      <p>Every operation with who did it and when — the audit trail when two mods disagree about what happened.</p>
+    </template>
+  </div>
+</div>
 
 <!-- co-mod session panel -->
 <div v-if="ui.sync.open" class="overlay" @click.self="ui.sync.open=false">
@@ -199,17 +261,13 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
         <button @click="syncJoin">Join</button>
         <span class="dim small">— adopts the host's game state</span>
       </div>
-      <h3>TURN relay <span class="dim">optional — needed when a mod is on mobile data / strict NAT</span></h3>
-      <input v-model="ui.sync.turnUrl" class="grow" style="width:100%"
-        placeholder="TURN credentials URL (e.g. from a free metered.ca account)">
-      <p class="dim small" style="margin:4px 0 0">Paste once on the host's machine; it is fetched when a
-        session starts and covers all peers. Stored locally, never synced.</p>
+      <p class="dim small" style="margin-top:10px">Works on normal home networks. A mod on mobile data
+        / hotspot may not be able to connect — use wifi.</p>
     </template>
 
     <template v-else>
       <div class="row">
         <span class="badge" :class="{warn: ui.sync.status!=='online'}">{{ ui.sync.role }} · {{ ui.sync.status }}</span>
-        <span class="badge" v-if="ui.sync.turnActive">TURN relay active</span>
         <span v-if="ui.sync.lastSync" class="dim small">last sync: {{ ui.sync.lastSync }}</span>
       </div>
       <template v-if="ui.sync.role==='host'">
@@ -1030,26 +1088,16 @@ const SYNC = {
   },
 
   persist() {
-    lsSave(LS.sync, { role: this.s.role, code: this.s.code, joinCode: this.s.joinCode, turnUrl: this.s.turnUrl });
+    lsSave(LS.sync, { role: this.s.role, code: this.s.code, joinCode: this.s.joinCode });
   },
 
-  /* STUN alone fails on CGNAT (mobile data). A TURN relay fixes it; the credentials
-     URL is any endpoint returning [{urls,username,credential},…] or {iceServers:[…]}
-     (e.g. a free metered.ca account). Host-side TURN is enough for the pair. */
-  async iceConfig() {
-    const ice = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
-    this.s.turnActive = false;
-    const url = (this.s.turnUrl || "").trim();
-    if (url) {
-      try {
-        const j = await (await fetch(url)).json();
-        const extra = Array.isArray(j) ? j : (j.iceServers || []);
-        ice.push(...extra);
-        this.s.turnActive = extra.some(s => /turns?:/i.test(JSON.stringify(s.urls || "")));
-        if (!this.s.turnActive) this.s.err = "credentials URL returned no TURN servers";
-      } catch (e) { this.s.err = "TURN fetch failed — continuing without relay"; }
-    }
-    return { iceServers: ice };
+  /* STUN only — enough for home networks; mods on CGNAT (mobile data) will not
+     connect. If that becomes a real need, re-add TURN via a credentials URL. */
+  iceConfig() {
+    return { iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+    ] };
   },
 
   async host(reuseCode) {
@@ -1058,8 +1106,7 @@ const SYNC = {
       this.leave(true);
       const code = reuseCode || this.newCode();
       Object.assign(this.s, { role: "host", status: "starting", code, err: "", peers: [] });
-      const config = await this.iceConfig();
-      const peer = new Peer(PEER_PREFIX + code.toLowerCase(), { config });
+      const peer = new Peer(PEER_PREFIX + code.toLowerCase(), { config: this.iceConfig() });
       this.peer = peer;
       peer.on("open", () => { this.s.status = "online"; this.persist(); });
       peer.on("disconnected", () => {      // lost the signaling server; existing conns survive
@@ -1112,8 +1159,7 @@ const SYNC = {
       this.leave(true);
       Object.assign(this.s, { role: "guest", status: "connecting", joinCode: code, err: "", peers: [] });
       this.persist();
-      const config = await this.iceConfig();
-      const peer = new Peer({ config });
+      const peer = new Peer({ config: this.iceConfig() });
       this.peer = peer;
       peer.on("error", err => {
         this.s.status = "error";
@@ -1233,9 +1279,9 @@ const app = createApp({
         itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false,
-        rosterMenu: false, statFlag: "",
+        rosterMenu: false, statFlag: "", help: false,
         sync: { open: false, role: "solo", status: "off", code: "", joinCode: "",
-                err: "", peers: [], lastSync: "", turnUrl: "", turnActive: false },
+                err: "", peers: [], lastSync: "" },
       },
     };
   },
@@ -2484,8 +2530,7 @@ const app = createApp({
     window.$vm = this;            // console access for debugging
     SYNC.init(this);
     const ss = lsLoad(LS.sync, null);        // prefill last session's codes; reconnecting stays manual
-    if (ss) { this.ui.sync.code = ss.code || ""; this.ui.sync.joinCode = ss.joinCode || "";
-              this.ui.sync.turnUrl = ss.turnUrl || ""; }
+    if (ss) { this.ui.sync.code = ss.code || ""; this.ui.sync.joinCode = ss.joinCode || ""; }
     /* one-time migration from the old multi-preset storage: keep the fullest one */
     if (!this.preset) {
       const legacy = lsLoad(LS.presetsLegacy, []);
