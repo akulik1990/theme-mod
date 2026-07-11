@@ -1599,16 +1599,18 @@ const app = createApp({
       let killsDone = false;
       const visits = [];   // {actor, target} of every action that went through — feeds watch/track
 
-      /* what an investigation sees for a dimension, disguise applied */
+      /* what an investigation sees for a dimension, disguise applied — a player can
+         carry several disguise flags (e.g. track + alignment); match by dimension,
+         with an as-character disguise covering the rest */
       const shownOf = (pl, dim) => {
-        const disg = pl.flags.find(f => f.key === "disguised" && f.param && f.param.value);
-        if (disg) {
-          if (disg.param.as === dim) return disg.param.value;
-          if (disg.param.as === "character") {
-            if (dim === "character") return disg.param.value;
-            const cd = g.preset.characters.find(c => c.name === disg.param.value);
-            if (cd && cd[dim]) return cd[dim];
-          }
+        const disgs = pl.flags.filter(f => f.key === "disguised" && f.param && f.param.value);
+        const direct = disgs.find(f => f.param.as === dim);
+        if (direct) return direct.param.value;
+        const asChar = disgs.find(f => f.param.as === "character");
+        if (asChar) {
+          if (dim === "character") return asChar.param.value;
+          const cd = g.preset.characters.find(c => c.name === asChar.param.value);
+          if (cd && cd[dim]) return cd[dim];
         }
         return dim === "character" ? pl.character : pl[dim];
       };
