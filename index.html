@@ -547,7 +547,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
               <div v-else class="pline" :class="{deadline:!en.p.alive}"
                 :style="{paddingLeft:(en.depth*14+6)+'px'}" @click="openPlayer(en.p)">
                 <input v-if="view.show.checklist" type="checkbox" class="ck" @click.stop
-                  v-model="game.checklist[en.p.name]" title="action collected (clears on Mark resolved)">
+                  v-model="game.checklist[en.p.name]" @change="tickSync"
+                  title="action collected (clears on Mark resolved)">
                 <span v-if="view.show.alignment" class="al" :style="alignChipStyle(en.p.alignment)"
                   :title="en.p.alignment">{{ alignMeta(game.preset, en.p.alignment).short }}</span>
                 <span v-if="view.show.category && catIconOf(game.preset, en.p.category)"
@@ -985,6 +986,8 @@ const STD_ITEMS = [
    theme flavour like "marked"/"cursed" belongs in preset customFlags */
 const STD_FLAGS = [
   { key:"invuln",      icon:"🛡️", name:"Invulnerable", description:"Hard immunity; beats all KP incl. penetrating. Not affected by strip." },
+  { key:"unblockable", icon:"🔓", name:"Unblockable",  description:"Roleblocks aimed at this player fizzle; their actions always go through." },
+  { key:"unredirectable", icon:"💠", name:"Unredirectable", description:"Redirects aimed at this player fizzle — their actions and incoming targeting stay put." },
   { key:"roleblocked", icon:"⛓️", name:"Roleblocked",  description:"Was roleblocked." },
   { key:"stripped",    icon:"💔", name:"Stripped",     description:"Protection stripped." },
   { key:"disguised",   icon:"🎭", name:"Disguised",    description:"Checks return the disguise, not the truth." },
@@ -1205,6 +1208,14 @@ const SYNC = {
   adopt(doc, from) {
     this.mute = true;
     const openName = this.vm.ui.modalP && this.vm.ui.modalP.name;
+    /* checklist ticks are set concurrently by several mods — union-merge them so an
+       incoming doc never wipes fresh local ticks. checklistRev bumps when Mark
+       Resolved clears the list, and a newer rev wins wholesale. */
+    if (this.vm.game && (doc.checklistRev || 0) === (this.vm.game.checklistRev || 0)) {
+      const local = this.vm.game.checklist || {};
+      doc.checklist = { ...(doc.checklist || {}) };
+      for (const k in local) if (local[k]) doc.checklist[k] = true;
+    }
     this.vm.game = doc;
     if (openName)      // re-point an open player modal at the adopted doc
       this.vm.ui.modalP = doc.players.find(p => p.name === openName) || null;
@@ -1683,6 +1694,9 @@ const app = createApp({
       return s;
     },
     openPlayer(p) { this.ui.modalP = p; },
+    /* checklist ticks bypass the debounced watcher (its send can fall inside the
+       post-adopt mute window and silently drop) — push the doc right away */
+    tickSync() { SYNC.send(this.game); },
     /* first use of a custom item/flag registers it on the game doc — shared with co-mods, reusable from the picker */
     registerCustom(list, inst) {
       if (!list.some(x => x.name === inst.name))
@@ -1961,6 +1975,8 @@ const app = createApp({
       g.players.forEach(p => W[p.name] = {
         blocked: false, forcedTarget: null, deflectTo: null, stripped: false,
         invuln: p.flags.some(f => f.key === "invuln"),
+        unblockable: p.flags.some(f => f.key === "unblockable"),
+        unredirectable: p.flags.some(f => f.key === "unredirectable"),
         guards: [],
         protections: p.inventory.filter(it => it.key === "vest" || it.key === "save")
           .map(it => ({ type: it.key, fromInventory: true })),
@@ -1984,8 +2000,11 @@ const app = createApp({
           const wT = W[t2];
           if (!wT) continue;
           switch (e2.action) {
-            case "roleblock": wT.blocked = true; preBlocked.add(t2); break;
+            case "roleblock":
+              if (!wT.unblockable) { wT.blocked = true; preBlocked.add(t2); }
+              break;
             case "redirect":
+              if (wT.unredirectable) break;
               if (e2.opts.mode === "at") wT.deflectTo = e2.opts.to; else wT.forcedTarget = e2.opts.to;
               break;
             case "strip": wT.stripped = true; wT.protections = []; break;
@@ -2071,7 +2090,9 @@ const app = createApp({
          1. a redirect by a declared block target is cancelled (A blocks B → no redirect)
          2. surviving redirects retarget everything, blocks included
             (A blocks C while B redirects C→D → A blocks D) */
-      const declaredBlockTargets = new Set(sorted.filter(e => e.action === "roleblock").map(e => e.target));
+      /* blocks on unblockable players never land, so they can't cancel a redirect either */
+      const declaredBlockTargets = new Set(sorted.filter(e => e.action === "roleblock")
+        .map(e => e.target).filter(n => !(W[n] && W[n].unblockable)));
       for (const e of sorted) {
         if (e.action !== "redirect") continue;
         if ((declaredBlockTargets.has(e.actor) || preBlocked.has(e.actor)) && charPrio(e.actor) === -1) {
@@ -2080,6 +2101,10 @@ const app = createApp({
         }
         const wT = W[e.target];
         if (!wT) continue;
+        if (wT.unredirectable) {
+          prop.skipped.push(this.evLine(e) + " — target is unredirectable");
+          continue;
+        }
         if (e.opts.mode === "at") wT.deflectTo = e.opts.to; else wT.forcedTarget = e.opts.to;
         visits.push({ actor: e.actor, target: e.target });
       }
@@ -2139,6 +2164,7 @@ const app = createApp({
         visits.push({ actor: e.actor, target: t });
         switch (e.action) {
           case "roleblock":
+            if (wT.unblockable) { prop.skipped.push(this.evLine(e) + " — target is unblockable"); break; }
             wT.blocked = true;
             prop.marks.push({ target: t, flag: "roleblocked", duration: 1 });
             break;
@@ -2387,7 +2413,8 @@ const app = createApp({
         });
         this.applyProp(ph, prop);
         g.events.forEach(e => { if (prop.events.includes(e.id)) e.status = "resolved"; });
-        g.checklist = {};                        // mod's collected-actions ticks reset each phase
+        g.checklist = {};                        // collected-actions ticks reset each phase
+        g.checklistRev = (g.checklistRev || 0) + 1;   // newer rev beats the union-merge on peers
         ph.report = this.mergeReport(ph.liveReport, prop);
         ph.liveReport = null;
         ph.committed = true;
