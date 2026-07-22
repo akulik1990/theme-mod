@@ -723,6 +723,12 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
             <span v-else class="dim small">older phase — un-resolve the latest committed phase first</span>
           </div>
 
+          <!-- RNG roller (0-2), each roll logged to the activity/Discord feed -->
+          <div class="row" id="g-rng" style="margin-top:12px;align-items:center;gap:10px">
+            <button @click="rollRng" title="roll a random 0, 1 or 2 — logged to activity">🎲 Roll RNG (0–2)</button>
+            <span v-if="ui.rngResult != null" class="badge" style="font-size:20px;padding:3px 14px">{{ ui.rngResult }}</span>
+          </div>
+
           <template v-if="activePhase.committed && activePhase.report">
             <h3>Discord output</h3>
             <pre class="paste">{{ phaseText(activePhase) }}</pre>
@@ -1311,7 +1317,7 @@ const app = createApp({
         itemSel: "", itemIcon: "📜", itemName: "", itemDesc: "",
         flagSel: "", flagIcon: "🎯", flagName: "", flagDesc: "",
         flagDur: null, disgAs: "character", disgVal: "", addMenu: false,
-        rosterMenu: false, statFlag: "",
+        rosterMenu: false, statFlag: "", rngResult: null,
         tour: { on: false, i: 0, total: 0, title: "", body: "", spot: {}, tip: {} },
         sync: { open: false, role: "solo", status: "off", code: "", joinCode: "",
                 err: "", peers: [], lastSync: "" },
@@ -1441,6 +1447,11 @@ const app = createApp({
 
   methods: {
     actionLabel,
+    /* RNG roller: random 0/1/2 (crypto), logged to the activity/Discord feed with the phase name */
+    rollRng() {
+      const n = crypto.getRandomValues(new Uint32Array(1))[0] % 3;
+      this.apply("RNG roll (" + this.activePhase.name + "): " + n, () => { this.ui.rngResult = n; });
+    },
     /* blank/legacy statuses count as active; only explicit unused/removed/cut are excluded from the deal */
     isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
     /* older saves used game-specific preMerge/postMerge; fold into one abilities field */
