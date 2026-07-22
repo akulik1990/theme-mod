@@ -187,6 +187,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
     <span class="dot"></span>{{ syncBadge() || 'co-mod' }}
   </button>
   <button class="mini helpbtn" @click="tourStart" title="guided tour of this tab">❓</button>
+  <button class="mini" title="mafia timer (opens in new window)"
+    onclick="window.open('https://akulik1990.github.io/mafia-timers/','mafiatimers','width=600,height=340');return false;">⏱ Timer</button>
 </header>
 
 <!-- guided tour: spotlight walks the actual UI, tip explains each area -->
