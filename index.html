@@ -724,9 +724,15 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
           </div>
 
           <!-- RNG roller (0-2), each roll logged to the activity/Discord feed -->
-          <div class="row" id="g-rng" style="margin-top:12px;align-items:center;gap:10px">
-            <button @click="rollRng" title="roll a random 0, 1 or 2 — logged to activity">🎲 Roll RNG (0–2)</button>
-            <span v-if="ui.rngResult != null" class="badge" style="font-size:20px;padding:3px 14px">{{ ui.rngResult }}</span>
+          <div class="row" id="g-rng" style="margin-top:12px;align-items:center;gap:8px">
+            <button v-if="!(activePhase.rngRolls && activePhase.rngRolls.length)" @click="rollRng"
+              title="roll a random 0, 1 or 2 — shared with co-mods, added to the Discord output">🎲 Roll RNG (0–2)</button>
+            <template v-else>
+              <span class="dim small">RNG</span>
+              <span v-for="(n,i) in activePhase.rngRolls" :key="i" class="badge" style="font-size:18px;padding:3px 12px">{{ n }}</span>
+              <button class="mini" @click="rollRng" title="another roll (e.g. split zoom)">+</button>
+              <button class="mini ghost" @click="clearRng" title="clear rolls">✕</button>
+            </template>
           </div>
 
           <template v-if="activePhase.committed && activePhase.report">
@@ -1450,7 +1456,13 @@ const app = createApp({
     /* RNG roller: random 0/1/2 (crypto), logged to the activity/Discord feed with the phase name */
     rollRng() {
       const n = crypto.getRandomValues(new Uint32Array(1))[0] % 3;
-      this.apply("RNG roll (" + this.activePhase.name + "): " + n, () => { this.ui.rngResult = n; });
+      this.apply("RNG roll (" + this.activePhase.name + "): " + n, () => {
+        this.ui.rngResult = n;
+        (this.activePhase.rngRolls || (this.activePhase.rngRolls = [])).push(n);
+      });
+    },
+    clearRng() {
+      this.apply("RNG cleared (" + this.activePhase.name + ")", () => { this.activePhase.rngRolls = []; this.ui.rngResult = null; });
     },
     /* blank/legacy statuses count as active; only explicit unused/removed/cut are excluded from the deal */
     isDealable(c) { return !/unused|removed|cut/i.test(c.status || ""); },
@@ -2457,6 +2469,7 @@ const app = createApp({
     phaseText(ph) {
       const r = ph.report;
       const out = [`=== ${ph.name} ===`];
+      if (ph.rngRolls && ph.rngRolls.length) out.push(`RNG: ${ph.rngRolls.join(", ")}`);
       /* full activity first: every logged action, control steps and custom included */
       (r.eventLines || r.logs.map(l => l.text)).forEach(l => out.push(`||${l}||`));
       r.skipped.forEach(s => out.push(`||failed: ${s}||`));
