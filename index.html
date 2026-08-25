@@ -13,6 +13,13 @@
   --text:#dbe3ee; --dim:#8b98ab; --acc:#5eead4; --acc2:#818cf8;
   --town:#60a5fa; --mafia:#f87171; --third:#fbbf24; --bad:#f87171; --good:#4ade80;
 }
+:root[data-theme="moss"]{
+  --bg:#12150c; --panel:#1a1f10; --panel2:#242b16; --line:#53652a;
+  --text:#e6e8d8; --dim:#8a9370; --acc:#9fb275; --acc2:#d9b04d;
+  --town:#85a8c8; --mafia:#c96a52; --third:#d9b04d; --bad:#c96a52; --good:#b4cf8a;
+}
+:root[data-theme="moss"] header{background:linear-gradient(180deg,#161b0e,#12150c)}
+:root[data-theme="moss"] button.on{color:#1c2410}
 *{box-sizing:border-box}
 [v-cloak]{display:none}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -188,6 +195,8 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
   <button class="mini helpbtn" @click="tourStart" title="guided tour of this tab">❓</button>
   <button class="mini" title="mafia timer (opens in new window)"
     onclick="window.open('https://akulik1990.github.io/mafia-timers/','mafiatimers','width=600,height=340');return false;">⏱ Timer</button>
+  <button class="mini" title="toggle moss theme"
+    onclick="var d=document.documentElement.dataset;var t=d.theme==='moss'?'':'moss';if(t)d.theme=t;else delete d.theme;localStorage.setItem('theme-mod-theme',t);return false;">🎨</button>
 </header>
 
 <div v-if="ui.tour.on" class="guide-ov" @click.self="tourNext">
@@ -922,6 +931,7 @@ pre.paste{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padd
 </div>
 
 <script>
+(function(){var t=localStorage.getItem("theme-mod-theme");if(t)document.documentElement.dataset.theme=t;})();
 "use strict";
 
 
